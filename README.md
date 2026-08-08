@@ -4,6 +4,8 @@ Kameo actors for agents over Iroh
 
 Peer actors, addressable by name and endpoint, that message each other—-locally or across the network—-to drive agents.
 
+*kamiroh — “Let’s be awesome!”*
+
 > **Status: early / WIP** — API and behavior may change.
 
 ## What it aims to be
