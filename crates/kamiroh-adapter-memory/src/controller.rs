@@ -83,7 +83,7 @@ impl AgentController for EchoController {
                 *status = AgentStatus::Idle;
                 Ok(ControlReply::Accepted)
             }
-            ControlMessage::Shutdown => {
+            ControlMessage::Detach => {
                 *status = AgentStatus::Stopped;
                 Ok(ControlReply::Accepted)
             }
@@ -122,12 +122,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_stops_the_agent_and_later_messages_fail() {
+    async fn detaching_stops_the_actor_and_later_messages_fail() {
         let controller = EchoController::with_agents([agent()]);
 
         assert_eq!(
             controller
-                .dispatch(&agent(), ControlMessage::Shutdown)
+                .dispatch(&agent(), ControlMessage::Detach)
                 .await
                 .unwrap(),
             ControlReply::Accepted

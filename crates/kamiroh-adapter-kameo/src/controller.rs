@@ -16,7 +16,7 @@ use crate::actor::AgentActor;
 ///
 /// Replaces `kamiroh-adapter-memory`'s `EchoController`. The visible difference
 /// is that an agent's state now lives in an actor rather than in a map: only
-/// one message is handled at a time, `Shutdown` really stops something, and
+/// one message is handled at a time, `Detach` really stops something, and
 /// [`AgentStatus::Busy`](kamiroh_domain::AgentStatus::Busy) is reachable
 /// because a prompt genuinely takes time.
 #[derive(Default)]
@@ -231,10 +231,10 @@ mod tests {
         );
 
         // And the mailbox still moves — this is the part that matters, since a
-        // wedged actor could not be interrupted or shut down.
+        // wedged actor could not be interrupted or detached from.
         assert_eq!(
             controller
-                .dispatch(&agent(), ControlMessage::Shutdown)
+                .dispatch(&agent(), ControlMessage::Detach)
                 .await
                 .unwrap(),
             ControlReply::Accepted
@@ -364,12 +364,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_stops_the_agent_and_later_messages_are_refused() {
+    async fn detaching_stops_the_actor_and_later_messages_are_refused() {
         let controller = KameoController::new().with_agent(agent(), EchoAgent);
 
         assert_eq!(
             controller
-                .dispatch(&agent(), ControlMessage::Shutdown)
+                .dispatch(&agent(), ControlMessage::Detach)
                 .await
                 .unwrap(),
             ControlReply::Accepted
@@ -385,10 +385,10 @@ mod tests {
     /// The answer must not depend on whether the actor has finished stopping,
     /// which is what the explicit `Stopped` check in the handler is for.
     #[tokio::test]
-    async fn a_shut_down_agent_stays_refused_once_its_actor_is_really_gone() {
+    async fn a_detached_agent_stays_refused_once_its_actor_is_really_gone() {
         let controller = KameoController::new().with_agent(agent(), EchoAgent);
         controller
-            .dispatch(&agent(), ControlMessage::Shutdown)
+            .dispatch(&agent(), ControlMessage::Detach)
             .await
             .unwrap();
 
@@ -403,7 +403,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_answers_a_prompt_that_was_still_running() {
+    async fn detaching_answers_a_prompt_that_was_still_running() {
         let (gate, gated) = Gate::new();
         let controller = Arc::new(KameoController::new().with_agent(agent(), gated));
 
@@ -415,7 +415,7 @@ mod tests {
         gate.started.notified().await;
 
         controller
-            .dispatch(&agent(), ControlMessage::Shutdown)
+            .dispatch(&agent(), ControlMessage::Detach)
             .await
             .unwrap();
 
@@ -430,7 +430,7 @@ mod tests {
             .with_agent(other(), EchoAgent);
 
         controller
-            .dispatch(&agent(), ControlMessage::Shutdown)
+            .dispatch(&agent(), ControlMessage::Detach)
             .await
             .unwrap();
 

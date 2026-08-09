@@ -66,7 +66,7 @@ cargo build --workspace
 | `disclosure.sh` | a stranger *finds* a published node and is refused — ARCHITECTURE.md §5a | internet |
 | `m3_live.sh` | two agents on one node, driven by name from a peer | sockets |
 | `kind_live.sh <kind>` | a real coding agent driven end to end through kamiroh | Herdr + that agent |
-| `use_it.sh` | what happens **while** an agent works: the refused read, and an agent still working after `/shutdown` | Herdr + claude |
+| `use_it.sh` | what happens **while** an agent works: the refused read, and an agent still working after `/detach` | Herdr + claude |
 | `unblock_test.sh` | a blocked agent's question answered **remotely**, clearing it | Herdr + claude |
 | `scratch_pane_test.sh` | agent state reported into a real Herdr pane | Herdr |
 

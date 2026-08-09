@@ -3,7 +3,7 @@
 //! # Agent-agnostic payloads
 //!
 //! kamiroh makes no assumption about what an agent does, so the *verbs* here are
-//! fixed (prompt / status / interrupt / shutdown) while the *content* is opaque:
+//! fixed (prompt / status / interrupt / detach) while the *content* is opaque:
 //! a [`Payload`] is bytes plus a content type, and only the agent behind the
 //! controller interprets it. `Payload::text` exists as a convenience for the
 //! common text-in/text-out case, not as a statement that agents are textual.
@@ -69,10 +69,24 @@ pub enum ControlMessage {
     Prompt(Payload),
     /// Ask what the agent is currently doing.
     Status,
-    /// Ask the agent to abandon its current work but stay alive.
+    /// Stop waiting on the agent's current work.
+    ///
+    /// **This does not reach the agent.** It abandons the run kamiroh is
+    /// waiting on and answers whoever was waiting; the agent carries on. Herdr
+    /// offers no way to interrupt one without per-kind keystrokes, which
+    /// agent-agnostic forbids. The controller survives, so [`Self::Status`]
+    /// still tells the truth about the agent afterwards.
     Interrupt,
-    /// Ask the agent to stop.
-    Shutdown,
+    /// Stop controlling this agent.
+    ///
+    /// **The agent is not stopped** — kamiroh cannot stop one — it carries on,
+    /// unwatched. Demonstrated rather than assumed: a live run answered this
+    /// message at 17:22:01 and the agent wrote 297 lines of code at 17:27:32.
+    ///
+    /// Final for this node's lifetime: the controller is not re-created, so
+    /// every later message to that name is refused as stopped. "Detach" names
+    /// the relationship that ends, not one that can be resumed.
+    Detach,
 }
 
 /// A controller actor's answer to a [`ControlMessage`].

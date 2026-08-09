@@ -99,7 +99,7 @@ impl AgentActor {
         let task = tokio::spawn(async move {
             let outcome = agent.run(prompt).await; // Result; the actor decides what it means
             // Back through the mailbox, so this transition is ordered against
-            // Interrupt and Shutdown instead of racing them. A send failure
+            // Interrupt and Detach instead of racing them. A send failure
             // means the actor is already gone, which is not ours to report.
             let _ = actor.tell(Finished(outcome)).await;
         });
@@ -174,7 +174,7 @@ impl Message<ControlMessage> for AgentActor {
                 // is exactly what this actor must not do without a limit: while
                 // it runs, nothing else in the mailbox moves, so an agent
                 // runtime that accepts a connection and never answers would
-                // make `Interrupt` and `Shutdown` unreachable — the agent could
+                // make `Interrupt` and `Detach` unreachable — the agent could
                 // not even be stopped. `run` is spawned and may take minutes;
                 // this is asked and answered, or it is abandoned.
                 //
@@ -199,8 +199,8 @@ impl Message<ControlMessage> for AgentActor {
                 ctx.reply(Ok(ControlReply::Accepted))
             }
 
-            ControlMessage::Shutdown => {
-                self.abandon("the agent was shut down");
+            ControlMessage::Detach => {
+                self.abandon("kamiroh detached from the agent");
                 self.status = AgentStatus::Stopped;
 
                 // Stopping is asked for from another task on purpose: the

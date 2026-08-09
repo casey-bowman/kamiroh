@@ -88,7 +88,7 @@ echo "=== driving it through kamiroh (KAMIROH_AGENT_TARGET=$SCRATCH) ==="
   sleep 10; printf '/status\n'
   sleep 20; printf '/status\n'
   sleep 20; printf '/status\n'
-  sleep 5;  printf '/shutdown\n'
+  sleep 5;  printf '/detach\n'
 } | env -u HERDR_PANE_ID -u HERDR_ENV -u HERDR_WORKSPACE_ID -u HERDR_TAB_ID \
       HERDR_SOCKET_PATH="$SOCK" \
       KAMIROH_KEY_FILE="$DEMO/node.key" KAMIROH_ALLOW_FILE="$DEMO/allow" \
@@ -111,17 +111,17 @@ kill $NODE 2>/dev/null; wait $NODE 2>/dev/null
 # Not `date` at the moment the grep loop noticed -- that is up to two seconds
 # late, and would print a time even when nothing was found. The file's mtime is
 # when kamiroh actually wrote that line, and this timestamp is half the evidence.
-SHUTDOWN_AT=$(stat -f '%Sm' -t '%H:%M:%S' "$DEMO/console.txt" 2>/dev/null \
+DETACHED_AT=$(stat -f '%Sm' -t '%H:%M:%S' "$DEMO/console.txt" 2>/dev/null \
               || stat -c '%y' "$DEMO/console.txt" 2>/dev/null)
 
 echo "--- what the console showed ---"
 sed -n '/^talking to/,$p' "$DEMO/console.txt"
 echo
 if [ "$STOPPED" = yes ]; then
-  echo "kamiroh reported the agent stopped at $SHUTDOWN_AT"
+  echo "kamiroh detached from the agent at $DETACHED_AT"
 else
   echo "!! kamiroh never reported the actor stopped -- the run below proves nothing"
-  echo "!! about /shutdown. Last console write was $SHUTDOWN_AT; see $DEMO/log.txt"
+  echo "!! about /detach. Last console write was $DETACHED_AT; see $DEMO/log.txt"
 fi
 
 echo
@@ -144,5 +144,5 @@ echo
 echo "--- herdr's view throughout ---"
 cat "$DEMO/truth.txt" 2>/dev/null
 echo
-echo "A lib.rs written after $SHUTDOWN_AT is the whole point: kamiroh answered"
-echo "/shutdown with 'ok' and the agent carried on working."
+echo "A lib.rs written after $DETACHED_AT is the whole point: kamiroh answered"
+echo "/detach with 'ok' and the agent carried on working."

@@ -23,10 +23,12 @@ three design questions turned out to be settled by Herdr's API, and the third
 changed shape.
 
 **P1 has started, with the bug P2 found rather than with a design.** The read
-source is fixed; a prompt to a working agent now returns `Partial{Busy}` instead
-of failing. What remains of P1 is the vocabulary: renaming `Shutdown` to what it
-does, and the one design question still open — whether the thing worth pushing
-to a remote operator is *"it needs you"* rather than more output.
+source is fixed, and `Shutdown` is now `Detach` — the verb says what it does, and
+a detached agent is reported `unknown` rather than `done`. **What remains of P1
+is one design question:** whether the thing worth pushing to a remote operator is
+*"it needs you"* rather than more output. Two smaller items are raised and
+waiting: whether `Interrupt` should be renamed too, and whether its handler
+should stop claiming `Idle` for an agent that may still be working.
 
 **The lettered plan is finished.** A→J are all complete.
 
@@ -55,6 +57,64 @@ reaches a coding agent that Herdr is managing. `EchoAgent` remains for nodes
 with no agent runtime, and for tests.
 
 ## Done
+
+**P1 (second slice) — `Shutdown` is now `Detach`, because that is what it does**
+
+`ControlMessage::Shutdown` was documented as "ask the agent to stop" and stopped
+the *controller actor*. The P2 run measured the gap: answered at 17:22:01, and
+the agent wrote 297 lines at 17:27:32. Renamed rather than reimplemented, because
+Herdr has **no method that stops an agent** — the only routes are `pane.close`
+(pane management, a stated non-goal) or `agent.send_keys` (per-kind keystrokes,
+which agent-agnostic forbids). A verb that reports success for something it did
+not do is the worst of the options, and the other two were unavailable.
+
+**Why `Detach` and not `Abandon` or `Release`.** It is the exact inverse of the
+word this repo already uses — *"Herdr starts agents; kamiroh attaches"*. The
+objection is that "detach" reads reversible and today it is not:
+`KameoController::dispatch` looks up an existing actor and never re-creates one,
+so the name answers `Stopped` for the life of the process. That is stated in the
+doc comment rather than papered over, and it is an implementation limit rather
+than a different meaning — if re-attaching ever arrives, the name is still right.
+
+**The wire byte did not move.** `request_kind::DETACH` is still `4`, and the
+codec round-trip tests passed untouched. That is the evidence this is a rename
+and not a protocol change: an older peer is unaffected.
+
+**The same lie was in the sidebar, which is the part a rename alone would have
+left.** `state_after` mapped this verb's `Accepted` to Herdr's `done`, so a pane
+announced that an agent had finished at the exact moment kamiroh stopped being
+able to know. It reports `unknown` now — the rule §6d already applied to an
+unreachable peer, applied to the case that broke it. The old behaviour had a test
+named `shutdown_reports_done` asserting it was right; the new one says why it is
+not.
+
+**Two smaller places the old word was still doing damage.** The abandoned-prompt
+reason string said *"the agent was shut down"* — and that one reaches a caller,
+as `ControllerError::Rejected { reason }`, so it repeated the exact claim the
+rename exists to remove. It says "kamiroh detached from the agent" now. And
+`/shutdown` at the console answered "unknown command", which is a poor reply to a
+word that worked an hour ago: it now names its replacement and says why, while
+**sending nothing**. An alias would have kept the misleading word working, which
+is the opposite of the point.
+
+**`Interrupt` got its doc corrected and kept its name**, which was Casey's call
+and is the right asymmetry. It has the same defect — it says "ask the agent to
+abandon its current work" and only abandons the run kamiroh is waiting on — but
+the controller survives it, so `Status` still tells the truth about the agent
+afterwards. `Detach` left nothing able to answer.
+
+**One thing raised rather than fixed, because it is past the scope Casey set.**
+The `Interrupt` handler sets the cached status to `Idle`. The agent may well
+still be working, so that is a guess in the dangerous direction; it self-corrects
+whenever `Agent::status` can be reached, and stands when it cannot. Leaving the
+previous value would be more honest. It belongs with the `Interrupt` rename
+question rather than with this slice.
+
+**Verified:** 193 tests, fmt and clippy clean, and the compiler found every
+propagation site — 26 references across six crates, exactly the shape M1
+predicted for a `ControlMessage` change. The doc's promise that a detached name
+is "refused as stopped" is pinned by a test asserting `ControllerError::Stopped`
+specifically, not merely an error.
 
 **P1 (first slice) — the read that could not run**
 

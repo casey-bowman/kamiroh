@@ -95,7 +95,7 @@ enum Kind {
     Prompt,
     Status,
     Interrupt,
-    Shutdown,
+    Detach,
 }
 
 impl Kind {
@@ -104,7 +104,7 @@ impl Kind {
             ControlMessage::Prompt(_) => Self::Prompt,
             ControlMessage::Status => Self::Status,
             ControlMessage::Interrupt => Self::Interrupt,
-            ControlMessage::Shutdown => Self::Shutdown,
+            ControlMessage::Detach => Self::Detach,
         }
     }
 }
@@ -124,7 +124,14 @@ fn state_after(kind: Kind, result: &Result<ControlReply, LinkError>) -> PaneAgen
         Ok(ControlReply::Partial { status, .. }) => (*status).into(),
         Ok(ControlReply::Output(_)) => PaneAgentState::Idle,
         Ok(ControlReply::Accepted) => match kind {
-            Kind::Shutdown => PaneAgentState::Done,
+            // **Not `done`.** Detaching stops kamiroh controlling the agent; it
+            // does not stop the agent, which may be mid-task and stay that way
+            // for minutes — measured, in the P2 run. `done` in a sidebar is a
+            // claim about the *agent*, and it would be false exactly when it
+            // matters. Having stopped watching, kamiroh does not know what the
+            // agent is doing, and `unknown` is what "I do not know" is called
+            // here: the same rule §6d already applies to an unreachable peer.
+            Kind::Detach => PaneAgentState::Unknown,
             Kind::Prompt | Kind::Status | Kind::Interrupt => PaneAgentState::Idle,
         },
     }
@@ -332,9 +339,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shutdown_reports_done() {
-        let seen = reported(ControlMessage::Shutdown, Ok(ControlReply::Accepted)).await;
-        assert_eq!(seen, vec![PaneAgentState::Done]);
+    /// Detaching says nothing about the agent, so the pane must not claim it
+    /// finished. It used to report `done`, which was the same false claim the
+    /// verb's old name made — and in the place an operator actually reads.
+    async fn detaching_reports_unknown_rather_than_done() {
+        let seen = reported(ControlMessage::Detach, Ok(ControlReply::Accepted)).await;
+        assert_eq!(
+            seen,
+            vec![PaneAgentState::Unknown],
+            "kamiroh stopped watching; it does not know what the agent is doing"
+        );
     }
 
     #[tokio::test]
@@ -505,6 +519,6 @@ mod tests {
         );
         assert_eq!(Kind::of(&ControlMessage::Status), Kind::Status);
         assert_eq!(Kind::of(&ControlMessage::Interrupt), Kind::Interrupt);
-        assert_eq!(Kind::of(&ControlMessage::Shutdown), Kind::Shutdown);
+        assert_eq!(Kind::of(&ControlMessage::Detach), Kind::Detach);
     }
 }

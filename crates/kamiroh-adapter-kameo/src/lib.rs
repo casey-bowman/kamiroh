@@ -9,7 +9,7 @@
 //!
 //! - Messages to one agent are handled one at a time, so the state machine
 //!   needs no lock and a completion cannot interleave with an interrupt.
-//! - `Shutdown` stops a real thing. Later messages are refused with
+//! - `Detach` stops a real thing — this actor. Later messages are refused with
 //!   [`ControllerError::Stopped`](kamiroh_ports::ControllerError::Stopped).
 //! - [`AgentStatus::Busy`](kamiroh_domain::AgentStatus::Busy) is reachable: a
 //!   prompt runs as its own task, so the agent can be observed working and

@@ -255,8 +255,22 @@ what keeps the domain RNG-free — `kamiroh-adapter-fs` supplies `getrandom`.
 `ParseNodeSecretError` carries no fragment of its input, not even the offending
 character, because that input is key material and errors get logged.
 
+**The verbs say what kamiroh does, not what it wishes it did.** `Detach` was
+called `Shutdown` until P1, and its doc said "ask the agent to stop". It stops
+the *controller actor*; the agent carries on, which the P2 run measured — an
+answer at 17:22:01 and 297 lines of code written at 17:27:32. A verb that
+reports success for something it did not do is worse than a missing one, so it
+was renamed rather than reimplemented: Herdr has no method that stops an agent,
+and the only routes to one are pane management or per-kind keystrokes, which §4
+and agent-agnosticism rule out respectively.
+
+The wire byte did not move (`4`), because this is a rename and not a protocol
+change — the codec round-trip tests passed untouched, which is the evidence.
+`Interrupt` keeps its name for now: it has the same gap, but the controller
+survives it, so `Status` still tells the truth about the agent afterwards.
+
 **`Payload` and the agent-agnostic boundary.** kamiroh fixes the control *verbs*
-(`Prompt`, `Status`, `Interrupt`, `Shutdown`) and leaves the *content* opaque: a
+(`Prompt`, `Status`, `Interrupt`, `Detach`) and leaves the *content* opaque: a
 `Payload` is bytes plus a content type, interpreted only by the agent behind the
 controller. `Payload::text` is a convenience for the common case, **not** a claim
 that agents are text-in/text-out. This is the deliberate reading of
@@ -495,6 +509,12 @@ Enforced by `kamiroh-adapter-herdr` and pinned by its tests:
 - **A failure reports `unknown`, never `idle`.** An unreachable peer says
   nothing about the agent behind it, and `idle` would be a guess presented as a
   fact.
+- **Detaching reports `unknown`, not `done`** — the same rule, applied to the
+  case that used to break it. `Detach` stops kamiroh controlling the agent; the
+  agent carries on, possibly mid-task, as the P2 run measured. Reporting `done`
+  in a sidebar is a claim about the *agent*, and it would be false exactly when
+  it matters. Having stopped watching, kamiroh does not know, and `unknown` is
+  what not knowing is called here.
 - **One request per connection.** Herdr answers and then closes; three `ping`s
   on one connection produce one response. Holding a connection open succeeds
   once and then fails forever with a broken pipe. Established by experiment
@@ -561,14 +581,14 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
   kamiroh's boundaries; `Agent` describes how *this* adapter runs the thing
   behind one. Promoting it would make every future controller adapter adopt one
   notion of "an agent", which is the assumption kamiroh exists not to make.
-- **`Agent::run` must be cancel-safe.** Interrupt and shutdown abort the task, so
+- **`Agent::run` must be cancel-safe.** Interrupt and detach abort the task, so
   the future is dropped wherever it was suspended.
 - **One prompt at a time, refused rather than queued.** The mailbox would happily
   queue a second, but silently serialising them would make `Busy` a lie: the
   caller would wait with no way to tell queued from running.
 - **Nothing is awaited inside a handler without a bound.** While an inline await
   runs, nothing else in the mailbox moves — so an agent runtime that accepts a
-  connection and never answers would make `Interrupt` and `Shutdown` unreachable
+  connection and never answers would make `Interrupt` and `Detach` unreachable
   and the agent unstoppable. `Status` is the only inline await, and it is capped
   at `STATUS_TIMEOUT`; a timeout leaves the cached status alone, exactly as an
   error does. Everything slow is spawned. M1 broke this rule while citing it,
@@ -579,7 +599,7 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
   timing. Stopping is requested from another task: the mailbox is bounded, and an
   actor awaiting a send into its own mailbox from inside a handler cannot drain
   it to make room.
-- **Nobody waiting on a prompt is left hanging.** Interrupt, shutdown, and the
+- **Nobody waiting on a prompt is left hanging.** Interrupt, detach, and the
   actor's own `on_stop` each answer an outstanding prompt before dropping it.
 
 ---

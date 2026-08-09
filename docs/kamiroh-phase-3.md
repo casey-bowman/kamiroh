@@ -109,7 +109,7 @@ substrate rather than by preference.** Read out of Herdr's own API schema:
   `revision`, so Herdr will tell you output moved — and then gives you no way to
   ask what moved.
 
-- **What should `Shutdown` mean? — Renaming is the only honest option.** There
+- **~~What should `Shutdown` mean?~~ Renamed to `Detach`. Done.** There
   is **no method in Herdr's API that stops an agent**: the agent namespace is
   `explain, focus, get, list, prompt, read, rename, send_keys, start, view.*,
   wait`. The only routes to stopping one are `pane.close` — pane management,
@@ -120,6 +120,13 @@ substrate rather than by preference.** Read out of Herdr's own API schema:
 
   The P2 run also raised the stakes: kamiroh reported `ok` at 17:22:01 and the
   agent wrote 297 lines at 17:27:32.
+
+  **Renamed to `Detach`**, the inverse of the word this repo already uses for
+  what kamiroh does to agents. The wire byte did not move, so it is a rename and
+  not a protocol change. The reporting path was the other half: this verb used to
+  make a pane say `done`, which was the same false claim where an operator reads
+  it — now `unknown`. `Interrupt` keeps its name and gained an honest doc; the
+  controller survives it, so it misleads less. See LOOP.md, P1.
 
 - **Does reading need streaming? — the question changed shape.** The original
   answer was "probably not first, prove the need". The P2 run suggests the need

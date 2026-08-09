@@ -31,6 +31,14 @@ enum Input {
     Help,
     /// An unrecognised slash command.
     Unknown(String),
+    /// A command that used to work, and what replaced it.
+    ///
+    /// Separate from [`Self::Unknown`] because "unknown command" is a poor
+    /// answer to a word that worked yesterday. **Not an alias** — it sends
+    /// nothing. It says what the verb is called now and why it changed, which
+    /// is the part worth knowing: the old name described something kamiroh
+    /// never did.
+    Retired(&'static str),
     /// A message for the agent.
     Message(ControlMessage),
 }
@@ -80,6 +88,9 @@ where
                 let text = format!("unknown command {command:?} — /help for the list\n");
                 output.write_all(text.as_bytes()).await?;
             }
+            Input::Retired(note) => {
+                output.write_all(format!("{note}\n").as_bytes()).await?;
+            }
             Input::Message(message) => {
                 let rendered = match link.send(message).await {
                     Ok(reply) => render(&reply),
@@ -104,8 +115,8 @@ where
 const HELP: &str = "\
   <anything>   send as a prompt
   /status      ask what the agent is doing
-  /interrupt   abandon the current prompt, keep the agent
-  /shutdown    stop the agent
+  /interrupt   stop waiting on the current prompt; the agent carries on
+  /detach      stop controlling the agent; it carries on, unwatched
   /quit        leave this console; the node keeps running
 ";
 
@@ -127,7 +138,10 @@ fn parse(line: &str) -> Input {
     match command {
         "status" => Input::Message(ControlMessage::Status),
         "interrupt" => Input::Message(ControlMessage::Interrupt),
-        "shutdown" => Input::Message(ControlMessage::Shutdown),
+        "detach" => Input::Message(ControlMessage::Detach),
+        "shutdown" => Input::Retired(
+            "/shutdown is now /detach — it never stopped the agent, only kamiroh's control of it",
+        ),
         "help" | "?" => Input::Help,
         "quit" | "exit" => Input::Quit,
         _ => Input::Unknown(trimmed.to_owned()),
@@ -293,14 +307,14 @@ mod tests {
     #[tokio::test]
     async fn slash_commands_map_to_the_other_control_verbs() {
         let link = FakeLink::echoing();
-        run("/status\n/interrupt\n/shutdown\n", Arc::clone(&link)).await;
+        run("/status\n/interrupt\n/detach\n", Arc::clone(&link)).await;
 
         assert_eq!(
             link.sent(),
             vec![
                 ControlMessage::Status,
                 ControlMessage::Interrupt,
-                ControlMessage::Shutdown,
+                ControlMessage::Detach,
             ]
         );
     }
@@ -403,5 +417,16 @@ mod tests {
             parse("plain"),
             Input::Message(ControlMessage::Prompt(Payload::text("plain")))
         );
+    }
+
+    /// `/shutdown` explains itself rather than shrugging — and, importantly,
+    /// **sends nothing**. An alias would keep the misleading word working.
+    #[test]
+    fn the_old_shutdown_command_says_what_replaced_it_and_sends_nothing() {
+        let Input::Retired(note) = parse("/shutdown") else {
+            panic!("expected a retired command, got {:?}", parse("/shutdown"));
+        };
+        assert!(note.contains("/detach"), "{note}");
+        assert!(note.contains("never stopped the agent"), "{note}");
     }
 }

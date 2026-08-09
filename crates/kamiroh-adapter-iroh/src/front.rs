@@ -204,7 +204,7 @@ mod tests {
         for (name, message) in [
             (&real, ControlMessage::Status),
             (&fake, ControlMessage::Status),
-            (&real, ControlMessage::Shutdown),
+            (&real, ControlMessage::Detach),
             (&fake, ControlMessage::Interrupt),
             (&real, ControlMessage::Prompt(Payload::text("secret"))),
             (&fake, ControlMessage::Prompt(Payload::text("secret"))),

@@ -167,7 +167,7 @@ mod tests {
                 .deliver(
                     Origin::remote(endpoint(byte)),
                     &agent(),
-                    ControlMessage::Shutdown,
+                    ControlMessage::Detach,
                 )
                 .await
                 .unwrap_err();
