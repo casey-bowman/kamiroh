@@ -8,7 +8,7 @@ identity; transport, allowlist and controller are still in-memory.
 
 ## Done
 
-**Slice E — `kamiroh-adapter-fs` key custody** (commit pending)
+**Slice E — `kamiroh-adapter-fs` key custody** (`5eb40b5`)
 
 - `FileKeyStore`: OS entropy via `getrandom`, stored as hex at
   `$XDG_CONFIG_HOME/kamiroh/node.key`, overridable with `KAMIROH_KEY_FILE`.
@@ -34,7 +34,7 @@ well as the pid, or threads in one process stage onto a single path and delete
 each other's candidate; and the temp file is removed by a scope guard on every
 exit path, since a stranded one is a live secret loose in the key directory.
 
-**Slice A — workspace + crate graph + ARCHITECTURE.md**
+**Slice A — workspace + crate graph + ARCHITECTURE.md** (`75feee2`)
 
 - Root `Cargo.toml` converted from a single package to a workspace
   (`resolver = "3"`, `[workspace.package]`, `[workspace.dependencies]`). The old
@@ -43,7 +43,7 @@ exit path, since a stranded one is a live secret loose in the key directory.
   `kamiroh-adapter-memory`, `kamiroh` (bin). crates.io metadata moved to the bin.
 - `docs/ARCHITECTURE.md` written against the code as built.
 
-**Slice B — port traits**
+**Slice B — port traits** (`75feee2`)
 
 - Driving: `ControlApi` with an opaque `Origin` (`remote()` / `local_front()`).
 - Driven: `Transport`, `Allowlist`, `KeyStore`, `AgentController`.
@@ -132,7 +132,7 @@ front — an inbound path calling `ControlApi` with an *authenticated* peer.
 Done when a node reports its real Iroh endpoint id, derived from the secret slice
 E persists, and an inbound message from an allowlisted peer reaches an agent.
 
-Two things to settle in F, both already recorded:
+Four things to settle in F:
 
 - The wire reply to an unauthorised peer must not distinguish "refused" from
   "no such actor" (ARCHITECTURE.md §7). `TransportError` separates them for the
@@ -140,9 +140,25 @@ Two things to settle in F, both already recorded:
   peer hands it an enumeration oracle.
 - Iroh's node id converts to `EndpointId` at the adapter boundary. If the domain
   needs to learn an Iroh type for this, the conversion is in the wrong place.
+- **Delete `placeholder_endpoint_for`**, don't merely stop calling it. A unused
+  fake key-derivation left in a test-double crate is the same hazard as the old
+  `Origin::Local` variant: available to be called by mistake.
+- The inbound path must build its `Origin` from the endpoint Iroh
+  **authenticated**, never one read out of message content, and must never call
+  `Origin::local_front()`. `grep -r local_front` should still show no adapters.
 
 Consult the advisor before F lands: it is both an architecture boundary and a
 security-sensitive path.
+
+## Known nits (not worth their own commit)
+
+- `FileKeyStore::default_path()` returns `KeyStoreError::Malformed` when neither
+  `XDG_CONFIG_HOME` nor `HOME` is set. Nothing is malformed there — the
+  environment is unconfigured — and it will read as a corrupt-key-file error to
+  whoever hits it. `Missing` fits better. Fix when F next touches that file.
+- `ScopedTempFile` has no disarm: `Drop` always removes the temp. Correct today.
+  If a future change needs the temp to survive (retrying a link, say), add a
+  disarm rather than restructuring the guard.
 
 ## Blockers
 
