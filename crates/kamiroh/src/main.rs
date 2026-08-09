@@ -4,11 +4,11 @@
 //! implementation, hands the wiring to the application layer, and does nothing
 //! else — no policy, no protocol, no agent logic.
 //!
-//! As of slice F2 this is a real node: it holds a persistent identity, listens
-//! for allowlisted peers over Iroh, and can drive agents on other nodes. The
-//! controller behind those agents is still the in-memory echo stand-in (slice G
-//! replaces it), and the allowlist is read from the environment rather than from
-//! a config adapter (slice I).
+//! As of slice G this is a real node: it holds a persistent identity, listens
+//! for allowlisted peers over Iroh, and drives agents — local or remote — that
+//! are real Kameo actors. What those agents *do* is still the echo stand-in,
+//! and the allowlist is read from the environment rather than from a config
+//! adapter (slice I).
 //!
 //! # Configuration
 //!
@@ -27,7 +27,8 @@ use kamiroh_adapter_fs::FileKeyStore;
 use kamiroh_adapter_iroh::{
     EndpointAddr, IrohTransport, bind_endpoint, endpoint_id_for, front, peer_address,
 };
-use kamiroh_adapter_memory::{EchoController, InMemoryAllowlist};
+use kamiroh_adapter_kameo::{EchoAgent, KameoController};
+use kamiroh_adapter_memory::InMemoryAllowlist;
 use kamiroh_app::ControlService;
 use kamiroh_domain::{ActorName, ControlMessage, EndpointId, Payload, PeerAddress};
 use kamiroh_ports::{
@@ -58,7 +59,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     let agent = ActorName::new("agent")?;
     let controller: Arc<dyn AgentController> =
-        Arc::new(EchoController::with_agents([agent.clone()]));
+        Arc::new(KameoController::new().with_agent(agent.clone(), EchoAgent));
 
     // --- Application --------------------------------------------------------
     let control: Arc<dyn ControlApi> = Arc::new(ControlService::new(allowlist, controller));

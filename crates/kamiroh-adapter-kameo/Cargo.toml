@@ -1,0 +1,25 @@
+[package]
+name = "kamiroh-adapter-kameo"
+description = "Kameo-backed kamiroh adapters: one controller actor per agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+async-trait.workspace = true
+tokio.workspace = true
+# `default-features = false` drops both defaults deliberately:
+#   - `remote` (already off) pulls libp2p; kamiroh's networking is Iroh, and a
+#     second peer-to-peer stack in the tree would be a standing invitation to
+#     route agent traffic over the wrong one.
+#   - `macros` only provides derives we do not use — the `Actor` impl here is
+#     written out, since `on_start` is where an agent's state would be built.
+#   - `tracing` would add a logging facade the workspace has not adopted yet.
+kameo = { version = "0.17", default-features = false }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }

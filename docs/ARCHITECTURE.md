@@ -59,7 +59,8 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-app` | Use cases against ports | domain, ports, `async-trait` |
 | `kamiroh-adapter-memory` | In-memory implementation of every driven port | domain, ports, `async-trait` |
 | `kamiroh-adapter-fs` | Node key custody on disk | domain, ports, `async-trait`, `getrandom` |
-| `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport (F2) | domain, `iroh-base` |
+| `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport and inbound front (F2) | domain, ports, `iroh-base`, `iroh` |
+| `kamiroh-adapter-kameo` | One controller actor per agent | domain, ports, `async-trait`, `tokio`, `kameo` |
 | `kamiroh` | Composition root (binary) | all of the above, `tokio` |
 
 `kamiroh-adapter-iroh` depends on `iroh-base` with `default-features = false,
@@ -72,11 +73,17 @@ reading the spec. F2 adds `iroh` proper.
 ### Deferred crates — a stated decision, not an omission
 
 The build plan's tree also lists `kamiroh-adapter-iroh`, `-kameo`, and `-herdr`.
-They are **not** created yet. An empty crate that exists only to be
-`cargo check`ed proves nothing and gets rewritten when the real adapter lands, so
-each arrives with its slice (F, G, J) — `-fs` arrived this way in slice E.
-`kamiroh-adapter-memory` covered the first deliverable's "no-op or in-memory
-adapters so the bin compiles" in one crate, and remains the test double set.
+None was created up front. An empty crate that exists only to be `cargo check`ed
+proves nothing and gets rewritten when the real adapter lands, so each arrives
+with its slice — `-fs` in E, `-iroh` in F, `-kameo` in G. Only `-herdr` (J) is
+still deferred. `kamiroh-adapter-memory` covered the first deliverable's "no-op
+or in-memory adapters so the bin compiles" in one crate, and remains the test
+double set.
+
+`kamiroh-adapter-kameo` takes `kameo` with `default-features = false`. Its
+`remote` feature pulls libp2p, and a second peer-to-peer stack in the tree would
+be a standing invitation to route agent traffic over the wrong one; kamiroh's
+networking is Iroh. The `macros` and `tracing` defaults are dropped as unused.
 
 ---
 
@@ -229,8 +236,13 @@ was **deleted** in F1 rather than left unused: a fake key derivation sitting in 
 test-double crate is available to be called by mistake. `InMemoryKeyStore` still
 exists as a test double but no longer backs the binary.
 
-**Still in-memory:** transport, allowlist, and controller. The Iroh transport is
-F2; the allowlist gains a real config source in I; the Kameo controller is G.
+**Still in-memory:** the allowlist, which gains a real config source in I. The
+transport and front became real in F2, the controller in G.
+
+`EchoController` survives as a test double for front tests, which want a
+controller that answers immediately and needs no runtime. Note what it cannot
+do: holding agent state in a map, it can never report `AgentStatus::Busy`, so a
+test that needs an agent genuinely at work belongs with the Kameo adapter.
 
 ## 6a. Key custody rules
 
@@ -257,16 +269,47 @@ Enforced by `kamiroh-adapter-fs` and pinned by its tests:
 
 ---
 
+## 6b. Controller actor rules
+
+Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
+
+- **One actor per agent; every state change goes through its mailbox.** That is
+  what makes the state machine safe without a lock, and it is why a prompt
+  finishing cannot interleave with an interrupt — they are two messages in an
+  order the mailbox already fixed.
+- **A prompt runs as its own task, and reports back through the mailbox.** If it
+  ran inline, the actor could not answer `Status` while working and `Interrupt`
+  would have nothing to arrive at. The task never touches actor state directly.
+- **`Agent` is an adapter trait, not a port.** The ports crate describes
+  kamiroh's boundaries; `Agent` describes how *this* adapter runs the thing
+  behind one. Promoting it would make every future controller adapter adopt one
+  notion of "an agent", which is the assumption kamiroh exists not to make.
+- **`Agent::run` must be cancel-safe.** Interrupt and shutdown abort the task, so
+  the future is dropped wherever it was suspended.
+- **One prompt at a time, refused rather than queued.** The mailbox would happily
+  queue a second, but silently serialising them would make `Busy` a lie: the
+  caller would wait with no way to tell queued from running.
+- **A shut-down agent answers the same way whether or not its actor has finished
+  stopping.** The actor holds an explicit `Stopped` state *and* a send to a dead
+  actor maps to `ControllerError::Stopped`, so the answer never depends on
+  timing. Stopping is requested from another task: the mailbox is bounded, and an
+  actor awaiting a send into its own mailbox from inside a handler cannot drain
+  it to make room.
+- **Nobody waiting on a prompt is left hanging.** Interrupt, shutdown, and the
+  actor's own `on_stop` each answer an outstanding prompt before dropping it.
+
+---
+
 ## 7. Where the next slices attach
 
 | Slice | Crate | Attaches at |
 |---|---|---|
 | ~~E~~ | `kamiroh-adapter-fs` | ✅ done — `KeyStore`, replacing `InMemoryKeyStore` in the binary |
 | ~~F1~~ | `kamiroh-adapter-iroh` | ✅ done — real `EndpointId` derivation; `placeholder_endpoint_for` deleted |
-| F2 | `kamiroh-adapter-iroh` | `Transport` + a front calling `ControlApi` with an authenticated peer |
-| | | ⚠ The reply sent **over the wire** to an unauthorised peer must not distinguish "refused" from "no such actor". `TransportError` separates them for the local caller, which is right; serialising that distinction back to a rejected peer would hand it the enumeration oracle §5.4 promises not to give. |
-| | | ⚠ `Origin` must be built from `connection.remote_id()` — the peer Iroh authenticated — never from message content. F2 must not call `Origin::local_front()`. |
-| G | `kamiroh-adapter-kameo` | `AgentController` — replaces `EchoController` |
+| ~~F2~~ | `kamiroh-adapter-iroh` | ✅ done — `Transport` + an inbound front calling `ControlApi` with an authenticated peer |
+| | | Both obligations held. The enumeration one holds **by ordering, not by collapsing codes**: `REFUSED` and `NO_SUCH_ACTOR` are distinct on the wire, but authorisation runs before the actor is looked up, so an unlisted peer gets byte-identical `REFUSED` whether or not the agent it names exists. The distinction only ever reaches a peer already trusted. Pinned by `an_unlisted_peer_learns_nothing_beyond_refused`. |
+| | | `Origin` is built from the connection's authenticated peer; `grep -rn local_front crates/` still shows the composition root as the only caller. |
+| ~~G~~ | `kamiroh-adapter-kameo` | ✅ done — `AgentController`, replacing `EchoController` in the binary |
 | I | allowlist config source | `Allowlist` — replaces the in-memory list |
 | J | `kamiroh-adapter-herdr` | A second front calling the same `ControlApi` |
 

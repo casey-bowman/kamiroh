@@ -1,8 +1,11 @@
 //! In-memory [`AgentController`] that echoes prompts back.
 //!
-//! Stands in for `kamiroh-adapter-kameo` until the real controller actor lands.
-//! It is deliberately trivial: kamiroh is agent-agnostic, so an "agent" that
-//! returns its prompt is as valid a stand-in as any.
+//! Since slice G the node runs `kamiroh-adapter-kameo`; this is the test double
+//! that outlived it. It holds agent state in a map rather than an actor, which
+//! is the point: a test for a *front* wants a controller that answers
+//! immediately and needs no runtime, not one with a mailbox and a lifecycle of
+//! its own. `AgentStatus::Busy` is unreachable here, so tests needing a
+//! genuinely working agent belong with the Kameo adapter.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
