@@ -10,12 +10,19 @@
 
 ## Current phase
 
-**Phase 2 is finished too** — M1–M4 and the review queue. The next pass is
+**Phase 2 is finished too** — M1–M4 and the review queue. The current pass is
 [kamiroh-phase-3.md](./kamiroh-phase-3.md), which found that the *control
 vocabulary* is now the narrowest part of the system: a caller cannot read a long
 task's output without sending another prompt at it, and `Shutdown` stops
 kamiroh's actor while the coding agent carries on. Both were read out of the
 code rather than remembered.
+
+**Phase 3's own question — P1 or P2 — was decided: P2, the "use it" half.** It
+is done, and it corrected the plan that proposed it (see P2 below). Two of P1's
+three design questions turned out to be settled by Herdr's API, and the third
+changed shape. **P1 is next, and it opens with a bug rather than a design: a
+`source` on `agent.read`, because the read kamiroh sends is refused whenever the
+agent is working.**
 
 **The lettered plan is finished.** A→J are all complete.
 
@@ -44,6 +51,90 @@ reaches a coding agent that Herdr is managing. `EchoAgent` remains for nodes
 with no agent runtime, and for tests.
 
 ## Done
+
+**P2 — using it, and the premise that did not survive**
+
+Phase 3 §5 recommended the "use it" half of P2 before P1, on the grounds that
+live use has twice overturned a design every unit test agreed with. It happened
+a third time, on the **first prompt**.
+
+A real `claude` agent in a scratch pane, given a task that takes minutes — an
+RPN calculator with twelve tests, work until `cargo test` passes — and driven
+through kamiroh's console.
+
+**1. A prompt to a working agent does not return `Partial{Busy}`. It fails.**
+
+```
+controller backend failed: the agent runtime is unavailable: Herdr refused the
+request: agent_not_idle: cannot read 200 lines while w1:pN is working: its
+alternate-screen history can only be captured by scrolling while idle.
+Wait and retry, or use --source visible
+```
+
+M1's design is: patience runs out, report `Busy` *plus whatever the agent had
+said so far*. The read that fetches "whatever it had said" is **refused by Herdr
+exactly when the agent is still working** — an alternate-screen TUI has no
+scrollback to capture until it goes idle. So the path built for the common case
+is the one that cannot run, and the caller gets an `AgentError` where the design
+promised a `Partial`.
+
+Nine `HerdrAgent` tests cover every outcome path against a fake daemon that
+answers the read. The real one rejects it. This is the trap already written down
+in CLAUDE.md — *a fake built from a schema agrees with whatever you assumed the
+schema meant* — landing on the one behaviour nobody thought to doubt.
+
+**`source` is a correctness requirement, not a refinement.** Herdr names the fix
+in its own error text. `agent.read` takes `source` ∈ `visible`,
+`recent`, `recent-unwrapped`, `detection`; kamiroh asks for 200 lines at the
+default and has never passed one. M1 recorded `DEFAULT_LINES = 200` returning the
+splash screen as a heuristic problem. It is not only that — it is a request the
+runtime refuses whenever the answer would be interesting.
+
+**2. `Shutdown` not reaching the agent is now demonstrated, with timestamps.**
+
+| | |
+|---|---|
+| 17:22:01 | kamiroh answers `/shutdown` with `ok`, prints `controller actor agent has stopped` |
+| 17:27:32 | the agent writes `src/lib.rs` — **297 lines** |
+
+Five and a half minutes of real work by an agent kamiroh reported as stopped,
+and it was still alive and waiting on a human after that. §2.2 was read out of
+the code; this is the same claim with a filesystem timestamp behind it. It also
+settles the tone of P1's naming question: this is not a verb that is merely
+imprecise, it is one that reports success for something it did not do.
+
+**3. What a long task actually consists of, which nothing had measured.** Herdr's
+view across the run:
+
+```
+  5s idle    10s–60s working    65s onwards blocked    (kamiroh shut down at ~60s)
+```
+
+The agent hit a permission dialog — "create lib.rs?" — then another on running
+`cargo test`. A real coding task is not one long `working` stretch with output at
+the end; it is **working punctuated by stops that need a human**. That reframes
+what a control layer is for. The scarce event to deliver to a remote operator is
+not "here is more output", it is "**it needs you, now**" — and kamiroh has that
+information already, since `Blocked` is in the domain and M1 proved a remote
+operator can clear one.
+
+Which makes the third of P1's design questions the interesting one after all.
+Herdr has `events.subscribe`, and `pane_agent_status_changed` carries the full
+status. Pushing *state* is nearly free; it is pushing *output* that is expensive,
+and output is the thing this run suggests matters less.
+
+**4. Two things that held, recorded because one nearly became a false finding.**
+kamiroh answered `/status` with `busy` three times while Herdr said `working` —
+checked against the timeline rather than assumed, and all three fall inside the
+`working` window. No repeat of M3's `codex` divergence here; kamiroh told the
+truth. And `/quit` ends the console but not the node, exactly as J1 decided —
+correct for a person at a pane, and a trap for anything piping input in, which
+waits forever for a process that is never going to exit.
+
+**What this pass deliberately did not do.** Nothing was implemented. Casey chose
+P2 so that P1's design would not be a third guess, and turning the read bug into
+a fix mid-pass would have been the fourth. It is written up in
+[kamiroh-phase-3.md](./kamiroh-phase-3.md) as the first thing P1 must do.
 
 **M3 — several agents, and a second agent kind**
 

@@ -40,14 +40,22 @@ obviously wants are unsayable.
 Output reaches a caller in exactly one way: as the reply to a `Prompt`, either
 `Output` or `Partial`. `Status` carries state and no output.
 
-So when a prompt returns `Partial{Busy}` after 20 seconds — which is the normal
-case for a coding agent — there is **no non-destructive way to see the rest**.
-Asking again means sending another `Prompt`, which types text at an agent that
-is still working. The workaround is worse than the gap.
+So when a prompt returns `Partial{Busy}` after 20 seconds there is **no
+non-destructive way to see the rest**. Asking again means sending another
+`Prompt`, which types text at an agent that is still working. The workaround is
+worse than the gap.
 
 M1 recorded this as "a caller can prompt again and read more, which is a
 workaround rather than a design". Having watched a real agent, it is worse than
 that: prompting again is not reading, it is interrupting.
+
+> **Corrected by the P2 usage run: `Partial{Busy}` is not what happens.** This
+> section assumed the 20-second timeout yields a partial answer, which is what
+> M1 built. Against a real agent the prompt **fails** — Herdr refuses
+> `agent.read` while the agent is working, because an alternate-screen TUI has
+> no scrollback to capture until it goes idle. The caller gets an `AgentError`,
+> not a `Partial`. So the gap is not "you cannot see the *rest*"; it is that you
+> cannot see *anything* until the agent stops. See LOOP.md, P2.
 
 ### 2.2 `Shutdown` does not stop the agent
 
@@ -77,21 +85,51 @@ carry them.
 **Done when** a caller can follow a long task without disturbing it, and can
 actually stop a remote agent.
 
-**Decisions to settle first:**
+**Do this first, before any of the design below: pass a `source`.** The P2 run
+found kamiroh's `agent.read` is *refused* whenever the agent is working, and
+Herdr's error names the fix. This is a bug in M1, not a design question — the
+`Partial{Busy}` path cannot execute as built. It wants a test against something
+that refuses the read the way the real daemon does, since nine tests against a
+fake that answers it all passed.
 
-- **One verb or two for reading?** `Read` (give me output since last time) is
-  the minimum. Whether it takes a cursor, or always returns "the last N", is the
-  design question — a terminal has no natural cursor, and M1's output heuristic
-  is already inexact.
-- **What should `Shutdown` mean?** Either make it reach the agent (a `stop` on
-  the `Agent` port, which `HerdrAgent` maps to something Herdr offers), or
-  rename it to say what it does and add a separate verb for stopping the agent.
-  Renaming is honest and cheap; reaching the agent is what people will expect.
-  **Do not leave it as it is** — a verb that reports success for something it did
-  not do is the worst of the three options.
-- **Does reading need streaming?** Probably not first. A `Read` verb answers
-  "what has it said" without a subscription, and subscriptions are a much larger
-  protocol change. Prove the need before paying for it.
+**Decisions to settle first — two of the three are now answered by the
+substrate rather than by preference.** Read out of Herdr's own API schema:
+
+- **Cursor or last-N for reading? — Last-N. Settled.** `agent.read` takes
+  `target`, `source`, `lines`, `format`, `strip_ansi`. There is **no offset, no
+  cursor, no since-revision**. A positioned read is not expressible, so a cursor
+  would have to be invented on top by diffing terminal snapshots — a heuristic
+  stacked on M1's existing one. What a `Read` verb *should* carry instead is
+  `source`: Herdr distinguishes `visible`, `recent`, `recent-unwrapped` and
+  `detection`, a dimension kamiroh currently ignores entirely.
+
+  Note the trap in the substrate: `pane_output_changed` carries a monotonic
+  `revision`, so Herdr will tell you output moved — and then gives you no way to
+  ask what moved.
+
+- **What should `Shutdown` mean? — Renaming is the only honest option.** There
+  is **no method in Herdr's API that stops an agent**: the agent namespace is
+  `explain, focus, get, list, prompt, read, rename, send_keys, start, view.*,
+  wait`. The only routes to stopping one are `pane.close` — pane management,
+  a stated non-goal in §4 — or `agent.send_keys`, which means per-kind
+  keystrokes, exactly what agent-agnostic forbids. So "make it reach the agent"
+  is not available without breaking a stated principle, and this is a fact about
+  the substrate rather than a taste. **The same applies to `Interrupt`.**
+
+  The P2 run also raised the stakes: kamiroh reported `ok` at 17:22:01 and the
+  agent wrote 297 lines at 17:27:32.
+
+- **Does reading need streaming? — the question changed shape.** The original
+  answer was "probably not first, prove the need". The P2 run suggests the need
+  is for something else. A long task is **working punctuated by stops that need a
+  human** — two permission dialogs in one task — so the event worth delivering to
+  a remote operator is "it needs you", not "here is more output". Herdr has
+  `events.subscribe`, and `pane_agent_status_changed` carries the full status, so
+  pushing *state* is nearly free. Pushing *output* is the expensive one, and it
+  is the one this run suggests matters less.
+
+  **This is the design question P1 should actually answer**, and it is the only
+  one of the three still open.
 
 **Cost is known.** M1 measured it: a `ControlMessage`/`ControlReply` change
 touches five compiler-caught sites, and the wire degrades to a clean
@@ -106,11 +144,13 @@ Two things have never been done on real hardware.
   different network, and the procedure is written:
   [reachability-test.md](./reachability-test.md). It is the only remaining claim
   in the README that has not been demonstrated.
-- **Use it.** Everything to date has been verified by scripts written alongside
-  the code. Nobody has driven a real agent through kamiroh for a day's work.
-  That is the cheapest remaining source of true information about what is wrong,
-  and P1's design questions above are exactly the sort that real use answers
-  better than reasoning does.
+- ~~**Use it.**~~ **Done, and it paid on the first prompt.** Everything to date
+  had been verified by scripts written alongside the code. One run against a
+  real agent on a real multi-minute task broke §2.1's premise, demonstrated
+  §2.2 with timestamps, and answered two of P1's three design questions from
+  Herdr's API rather than from reasoning. Written up in LOOP.md under P2. A
+  day's use would still be worth more than a run; the run was enough to stop P1
+  being designed against a case that does not occur.
 
 **This is a legitimate plan item, not a gap in the plan.** The next most
 valuable thing kamiroh can receive is not a feature.
@@ -189,7 +229,15 @@ too late:**
 
 ---
 
-## 5. The decision this plan needs
+## 5. The decision this plan needed — settled
+
+**Casey chose P2, the "use it" half, on 2026-08-09.** The reasoning below turned
+out to be right for a reason it did not anticipate: the run did not merely
+inform P1's design, it **falsified a premise this document was built on** (§2.1)
+and reduced P1's three open questions to one. The original argument stands
+unedited below, since it is the argument that earned the run.
+
+---
 
 **Is the next step P1 or P2?**
 

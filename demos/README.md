@@ -66,6 +66,7 @@ cargo build --workspace
 | `disclosure.sh` | a stranger *finds* a published node and is refused — ARCHITECTURE.md §5a | internet |
 | `m3_live.sh` | two agents on one node, driven by name from a peer | sockets |
 | `kind_live.sh <kind>` | a real coding agent driven end to end through kamiroh | Herdr + that agent |
+| `use_it.sh` | what happens **while** an agent works: the refused read, and an agent still working after `/shutdown` | Herdr + claude |
 | `unblock_test.sh` | a blocked agent's question answered **remotely**, clearing it | Herdr + claude |
 | `scratch_pane_test.sh` | agent state reported into a real Herdr pane | Herdr |
 
@@ -89,6 +90,13 @@ the next rewrite does not rediscover them.
   the last element.
 - **Rebuild before running.** `cargo test` does not rebuild the binary, so a
   demo can silently exercise yesterday's code. This wasted two rounds.
+- **`/quit` ends the console, not the node.** J1 decided that on purpose — a
+  serving node has nobody at its pane — so a script that pipes input in and then
+  waits for the process hangs forever. Kill it instead. `use_it.sh` waits for the
+  line it wants and then kills.
+- **`agent.read` is refused while an agent is working.** `agent_not_idle`: an
+  alternate-screen TUI has no scrollback to capture until it goes idle. This is
+  not a demo trap so much as a kamiroh bug the demos found; see LOOP.md, P2.
 
 ## The ones that cost money
 
