@@ -123,6 +123,13 @@ Herdr has `events.subscribe`, and `pane_agent_status_changed` carries the full
 status. Pushing *state* is nearly free; it is pushing *output* that is expensive,
 and output is the thing this run suggests matters less.
 
+**One run, one task, one agent kind** — so this is a hypothesis, not a
+measurement. It also depends on `Blocked` being detected, and M3 already found
+that `codex` reports the same permission prompt as `idle`. A design that pushes
+"it needs you" would simply stay quiet for a kind whose manifest misses it,
+which is the failure mode kamiroh cannot fix from its side. Recorded in
+kamiroh-phase-3.md against P1 so it is not assumed away.
+
 **4. Two things that held, recorded because one nearly became a false finding.**
 kamiroh answered `/status` with `busy` three times while Herdr said `working` —
 checked against the timeline rather than assumed, and all three fall inside the

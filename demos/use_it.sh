@@ -17,7 +17,13 @@ DEMO="${TMPDIR:-/tmp}/kamiroh-use-it"
 WORK="$DEMO/work"
 BIN=./target/debug/kamiroh
 
-rm -rf "$DEMO"; mkdir -p "$WORK"
+# **The work directory is stable and is never deleted**, which is not tidiness.
+# Claude Code records workspace trust per *path*, so a script that made a fresh
+# directory each run would hit the trust dialog every time, exit at the gate,
+# and never once reach the part that produces the finding. Contents are cleared;
+# the path is kept, so answering the dialog once makes every later run silent.
+mkdir -p "$WORK"
+rm -rf "$WORK/src" "$WORK/target" "$DEMO/console.txt" "$DEMO/log.txt" "$DEMO/truth.txt"
 call() { printf '%s\n' "$1" | nc -U "$SOCK" 2>/dev/null; }
 state() { call "{\"id\":\"s\",\"method\":\"agent.get\",\"params\":{\"target\":\"$1\"}}" \
             | jq -r '.result.agent.agent_status // "?"'; }
@@ -49,15 +55,20 @@ for i in $(seq 1 60); do
   sleep 1
 done
 
-# Claude Code asks for workspace trust once per directory path, and this script
-# uses a fresh one every run. That is deliberate: approving a consent prompt
-# from a script is one step from approving it in the product. Answer it in the
-# pane, and expect more of them -- a real task stops for permission repeatedly,
-# which is itself one of this script's findings.
+# Approving a consent prompt from a script is one step from approving it in the
+# product, so this stops and asks a human instead. It happens on the *first* run
+# only: the work directory above is stable, so once the dialog is answered every
+# later run walks straight past it.
 if [ "$(state "$SCRATCH")" = "blocked" ]; then
   echo
-  echo "!! blocked before kamiroh has sent anything -- the workspace-trust dialog"
-  echo "!! for $WORK. Answer it in pane $SCRATCH, then re-run."
+  echo "!! Blocked before kamiroh has sent anything -- Claude Code's"
+  echo "!! workspace-trust dialog for $WORK."
+  echo "!!"
+  echo "!! Answer it in pane $SCRATCH, then run this script again. The directory"
+  echo "!! is reused, so this is a one-time step and the re-run will proceed."
+  echo "!! The pane is left open so you can answer it; close it yourself"
+  echo "!! afterwards, since the next run splits its own."
+  SCRATCH=""   # leave the pane up so the dialog can be answered
   exit 1
 fi
 
@@ -88,17 +99,30 @@ NODE=$!
 # `/quit` ends the *console*, not the node -- J1 decided that deliberately, since
 # a serving node has nobody at its pane. So a piped driver must kill the process
 # rather than wait for it; waiting hangs forever.
+STOPPED=no
 for _ in $(seq 1 40); do
-  grep -q 'controller actor .* has stopped' "$DEMO/console.txt" 2>/dev/null && break
+  if grep -q 'controller actor .* has stopped' "$DEMO/console.txt" 2>/dev/null; then
+    STOPPED=yes; break
+  fi
   sleep 2
 done
-SHUTDOWN_AT=$(date "+%H:%M:%S")
 kill $NODE 2>/dev/null; wait $NODE 2>/dev/null
+
+# Not `date` at the moment the grep loop noticed -- that is up to two seconds
+# late, and would print a time even when nothing was found. The file's mtime is
+# when kamiroh actually wrote that line, and this timestamp is half the evidence.
+SHUTDOWN_AT=$(stat -f '%Sm' -t '%H:%M:%S' "$DEMO/console.txt" 2>/dev/null \
+              || stat -c '%y' "$DEMO/console.txt" 2>/dev/null)
 
 echo "--- what the console showed ---"
 sed -n '/^talking to/,$p' "$DEMO/console.txt"
 echo
-echo "kamiroh reported the agent stopped at $SHUTDOWN_AT"
+if [ "$STOPPED" = yes ]; then
+  echo "kamiroh reported the agent stopped at $SHUTDOWN_AT"
+else
+  echo "!! kamiroh never reported the actor stopped -- the run below proves nothing"
+  echo "!! about /shutdown. Last console write was $SHUTDOWN_AT; see $DEMO/log.txt"
+fi
 
 echo
 echo "=== is the agent still alive and working after that? ==="

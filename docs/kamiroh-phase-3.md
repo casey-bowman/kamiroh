@@ -131,6 +131,17 @@ substrate rather than by preference.** Read out of Herdr's own API schema:
   **This is the design question P1 should actually answer**, and it is the only
   one of the three still open.
 
+  **With one dependency P1 must not assume away.** This rests on `Blocked` being
+  trustworthy, and M3 measured that it is not equally so: a startup permission
+  prompt is `blocked` for `claude` and `idle` for `codex` — the same situation,
+  and the wrong answer is wrong in the direction that matters, since a design
+  that pushes "it needs you" simply stays silent for a kind whose manifest does
+  not detect it. The P2 run exercised `claude` only. So a control layer built on
+  pushing `Blocked` inherits Herdr's per-kind detection quality, which is §6e's
+  stated limitation and the candidate decision at the foot of
+  [OPEN-DECISIONS.md](./OPEN-DECISIONS.md). Measure a second kind before
+  committing to it.
+
 **Cost is known.** M1 measured it: a `ControlMessage`/`ControlReply` change
 touches five compiler-caught sites, and the wire degrades to a clean
 `CodecError::Discriminant` on an older peer rather than misparsing.
