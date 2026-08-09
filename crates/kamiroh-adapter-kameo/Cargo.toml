@@ -22,4 +22,6 @@ tokio.workspace = true
 kameo = { version = "0.17", default-features = false }
 
 [dev-dependencies]
+# `EchoAgent` moved to the test-double crate when `Agent` became a port.
+kamiroh-adapter-memory.workspace = true
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }

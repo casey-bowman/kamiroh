@@ -4,10 +4,10 @@
 //! implementation, hands the wiring to the application layer, and does nothing
 //! else — no policy, no protocol, no agent logic.
 //!
-//! As of slice I every driven port has a real adapter: a persistent identity on
-//! disk, an allowlist read from a file, an Iroh transport and front, and agents
-//! that are real Kameo actors. What those agents *do* is still the echo
-//! stand-in.
+//! As of M1 every driven port has a real adapter and so does the agent itself:
+//! a persistent identity on disk, an allowlist read from a file, an Iroh
+//! transport and front, controller actors, and — with
+//! `KAMIROH_AGENT_TARGET` set — a real coding agent that Herdr is managing.
 //!
 //! # Configuration
 //!
@@ -17,6 +17,7 @@
 //! | `KAMIROH_ALLOW_FILE` | The allowlist file. Default `$XDG_CONFIG_HOME/kamiroh/allow`. |
 //! | `KAMIROH_ALLOW` | Comma-separated endpoint ids. **Overrides the file entirely**, for tests and for running several nodes on one machine. |
 //! | `KAMIROH_PEER` | `<endpoint-id-hex>@<host:port>` — a peer to greet on startup. |
+//! | `KAMIROH_AGENT_TARGET` | A Herdr pane id or agent name to drive. Unset means the echo stand-in. |
 //!
 //! Nothing is admitted by default, whichever source is used: an unset variable,
 //! an absent file and an empty file all mean "admit nobody". A file that exists
@@ -35,8 +36,8 @@ use kamiroh_adapter_herdr::{Link, LocalLink, RemoteLink, console, report};
 use kamiroh_adapter_iroh::{
     EndpointAddr, IrohTransport, bind_endpoint, endpoint_id_for, front, peer_address,
 };
-use kamiroh_adapter_kameo::{EchoAgent, KameoController};
-use kamiroh_adapter_memory::InMemoryAllowlist;
+use kamiroh_adapter_kameo::KameoController;
+use kamiroh_adapter_memory::{EchoAgent, InMemoryAllowlist};
 use kamiroh_app::ControlService;
 use kamiroh_domain::{ActorName, ControlMessage, EndpointId, Payload, PeerAddress};
 use kamiroh_ports::{
@@ -51,6 +52,8 @@ const ALLOW_ENV: &str = "KAMIROH_ALLOW";
 const ALLOW_FILE_ENV: &str = "KAMIROH_ALLOW_FILE";
 /// A peer to greet on startup, as `<endpoint-id-hex>@<host:port>`.
 const PEER_ENV: &str = "KAMIROH_PEER";
+/// The Herdr-managed agent this node drives, if any.
+const AGENT_TARGET_ENV: &str = "KAMIROH_AGENT_TARGET";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -84,8 +87,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let (allowlist, allow_summary) = build_allowlist()?;
 
     let agent = ActorName::new("agent")?;
-    let controller: Arc<dyn AgentController> =
-        Arc::new(KameoController::new().with_agent(agent.clone(), EchoAgent));
+    let (controller, agent_summary) = build_controller(&agent);
 
     // --- Application --------------------------------------------------------
     let control: Arc<dyn ControlApi> = Arc::new(ControlService::new(allowlist, controller));
@@ -108,7 +110,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!("key file:    {}", key_path.display());
     println!("endpoint id: {local_endpoint}");
     println!("listening:   {listening:?}");
-    println!("agent:       {agent}");
+    println!("agent:       {agent} — {agent_summary}");
     println!("allowing:    {allow_summary}");
 
     local_smoke(control.as_ref(), &agent).await?;
@@ -169,6 +171,40 @@ async fn run() -> Result<(), Box<dyn Error>> {
     tokio::signal::ctrl_c().await?;
     println!("stopping");
     Ok(())
+}
+
+/// Resolves what is behind the agent, and a line saying which it is.
+///
+/// `KAMIROH_AGENT_TARGET` names a Herdr-managed agent — a pane id or an agent
+/// name. Without it the echo stand-in runs, which is what makes a node useful
+/// for testing the rest of kamiroh without a coding agent attached.
+///
+/// A target that is set but unusable falls back to the stand-in *and says so*.
+/// Refusing to start would be defensible, but unlike a malformed allowlist this
+/// is not a security boundary: the wrong answer here is a useless agent, not an
+/// admitted stranger.
+fn build_controller(agent: &ActorName) -> (Arc<dyn AgentController>, String) {
+    let target = std::env::var_os(AGENT_TARGET_ENV)
+        .map(|target| target.to_string_lossy().into_owned())
+        .filter(|target| !target.trim().is_empty());
+
+    let Some(target) = target else {
+        return (
+            Arc::new(KameoController::new().with_agent(agent.clone(), EchoAgent)),
+            format!("echo stand-in; set {AGENT_TARGET_ENV} to drive a Herdr agent"),
+        );
+    };
+
+    match kamiroh_adapter_herdr::herdr_agent(&target) {
+        Some(herdr) => (
+            Arc::new(KameoController::new().with_agent(agent.clone(), herdr)),
+            format!("Herdr agent {target}"),
+        ),
+        None => (
+            Arc::new(KameoController::new().with_agent(agent.clone(), EchoAgent)),
+            format!("echo stand-in; {AGENT_TARGET_ENV}={target} but no Herdr socket is reachable"),
+        ),
+    }
 }
 
 /// Resolves the allowlist, returning it and a line describing where it came

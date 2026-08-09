@@ -48,7 +48,10 @@ impl Pane {
 }
 
 /// `$HERDR_SOCKET_PATH`, else `~/.config/herdr/herdr.sock`.
-fn socket_path() -> Option<PathBuf> {
+///
+/// Public because driving a Herdr *agent* needs the socket but not a pane of
+/// one's own: kamiroh can sit outside Herdr and still prompt an agent inside it.
+pub fn socket_path() -> Option<PathBuf> {
     if let Some(path) = non_empty(SOCKET_ENV) {
         return Some(PathBuf::from(path));
     }
@@ -74,10 +77,9 @@ fn non_empty(key: &str) -> Option<String> {
 /// not quite onto, in both directions, and both gaps are decisions rather than
 /// oversights:
 ///
-/// - **`Blocked` is never produced.** Herdr means "waiting on a human for
-///   approval or an answer". No kamiroh agent currently waits on input — the
-///   controller either has work or does not. When one does, this is where it
-///   surfaces, and it is the state Herdr users care most about.
+/// - **`Blocked` maps straight through**, as of M1. It was unreachable until
+///   `AgentStatus::Blocked` existed; the note here used to say "when one does,
+///   this is where it surfaces". This is where it surfaced.
 /// - **`Starting` maps to `Unknown`, not `Idle`.** An agent that is not yet
 ///   ready is not idle, and a sidebar reading "idle" would invite someone to
 ///   prompt it. `Unknown` is the only value that asserts nothing false. In
@@ -98,6 +100,21 @@ pub enum PaneAgentState {
 }
 
 impl PaneAgentState {
+    /// Reads a state Herdr reported back.
+    ///
+    /// Anything unrecognised becomes [`Unknown`](Self::Unknown) rather than an
+    /// error: this is Herdr's vocabulary, Herdr may add to it, and a state we
+    /// do not know is precisely what "unknown" is for.
+    pub fn from_wire(text: &str) -> Self {
+        match text {
+            "idle" => Self::Idle,
+            "working" => Self::Working,
+            "blocked" => Self::Blocked,
+            "done" => Self::Done,
+            _ => Self::Unknown,
+        }
+    }
+
     /// The wire form Herdr expects.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -117,6 +134,7 @@ impl From<kamiroh_domain::AgentStatus> for PaneAgentState {
             AgentStatus::Starting => Self::Unknown,
             AgentStatus::Idle => Self::Idle,
             AgentStatus::Busy => Self::Working,
+            AgentStatus::Blocked => Self::Blocked,
             AgentStatus::Stopped => Self::Done,
         }
     }

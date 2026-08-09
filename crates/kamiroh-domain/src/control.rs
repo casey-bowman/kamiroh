@@ -82,8 +82,27 @@ pub enum ControlReply {
     Accepted,
     /// The agent's current state.
     Status(AgentStatus),
-    /// Content produced by the agent.
+    /// Everything the agent produced; it is finished and ready for more.
     Output(Payload),
+    /// What the agent has produced *so far*, and why there is not more of it.
+    ///
+    /// Two situations need this, and both are ordinary for a long-running
+    /// agent rather than exceptional:
+    ///
+    /// - It is [`Blocked`](AgentStatus::Blocked) — waiting for a human to
+    ///   answer something. The output holds the question.
+    /// - It is still [`Busy`](AgentStatus::Busy) and the caller's patience ran
+    ///   out first. Remote callers have a bounded wait; agents do not.
+    ///
+    /// [`Output`](Self::Output) would be a lie in both: it claims the agent is
+    /// done. The distinction matters most where it is least visible — a caller
+    /// on another node has no other way to learn that its agent is stuck.
+    Partial {
+        /// What the agent has produced so far.
+        output: Payload,
+        /// Why there is not more of it yet.
+        status: AgentStatus,
+    },
 }
 
 /// Coarse lifecycle state of an agent, as seen by its controller.
@@ -95,6 +114,13 @@ pub enum AgentStatus {
     Idle,
     /// Working on a prompt.
     Busy,
+    /// Cannot proceed without a human: it has asked something and stopped.
+    ///
+    /// Agent-agnostic despite sounding specific. It says nothing about *what*
+    /// was asked — only that the agent will not progress until someone
+    /// answers. That is the single most useful thing to know about an agent
+    /// you are not sitting next to.
+    Blocked,
     /// No longer running.
     Stopped,
 }
@@ -105,6 +131,7 @@ impl fmt::Display for AgentStatus {
             Self::Starting => "starting",
             Self::Idle => "idle",
             Self::Busy => "busy",
+            Self::Blocked => "blocked",
             Self::Stopped => "stopped",
         };
         f.write_str(text)

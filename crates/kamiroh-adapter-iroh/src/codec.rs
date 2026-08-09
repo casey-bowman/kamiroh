@@ -69,6 +69,17 @@ mod reply_kind {
     pub const ACCEPTED: u8 = 1;
     pub const STATUS: u8 = 2;
     pub const OUTPUT: u8 = 3;
+    pub const PARTIAL: u8 = 4;
+}
+
+/// Wire values for [`AgentStatus`]. Written out rather than derived, so that
+/// reordering the enum cannot silently renumber the protocol.
+mod status_code {
+    pub const STARTING: u8 = 1;
+    pub const IDLE: u8 = 2;
+    pub const BUSY: u8 = 3;
+    pub const STOPPED: u8 = 4;
+    pub const BLOCKED: u8 = 5;
 }
 
 /// Numeric reply codes for failures.
@@ -301,19 +312,49 @@ pub fn encode_reply(reply: &ControlReply) -> Vec<u8> {
         ControlReply::Accepted => out.push(reply_kind::ACCEPTED),
         ControlReply::Status(status) => {
             out.push(reply_kind::STATUS);
-            out.push(match status {
-                AgentStatus::Starting => 1,
-                AgentStatus::Idle => 2,
-                AgentStatus::Busy => 3,
-                AgentStatus::Stopped => 4,
-            });
+            out.push(status_byte(*status));
         }
         ControlReply::Output(payload) => {
             out.push(reply_kind::OUTPUT);
             put_payload(&mut out, payload);
         }
+        ControlReply::Partial { output, status } => {
+            out.push(reply_kind::PARTIAL);
+            // Fixed-width field first, then the variable one.
+            out.push(status_byte(*status));
+            put_payload(&mut out, output);
+        }
     }
     out
+}
+
+/// The wire byte for a status.
+fn status_byte(status: AgentStatus) -> u8 {
+    match status {
+        AgentStatus::Starting => status_code::STARTING,
+        AgentStatus::Idle => status_code::IDLE,
+        AgentStatus::Busy => status_code::BUSY,
+        AgentStatus::Stopped => status_code::STOPPED,
+        AgentStatus::Blocked => status_code::BLOCKED,
+    }
+}
+
+/// Reads a status byte, rejecting one this build does not know.
+///
+/// A peer built before `Blocked` existed answers `Discriminant` here rather
+/// than guessing — which is why adding a status needed no version bump.
+fn read_status(reader: &mut Reader<'_>) -> Result<AgentStatus, CodecError> {
+    match reader.u8()? {
+        status_code::STARTING => Ok(AgentStatus::Starting),
+        status_code::IDLE => Ok(AgentStatus::Idle),
+        status_code::BUSY => Ok(AgentStatus::Busy),
+        status_code::STOPPED => Ok(AgentStatus::Stopped),
+        status_code::BLOCKED => Ok(AgentStatus::Blocked),
+        got => Err(CodecError::Discriminant {
+            field: "agent status",
+            got,
+        }),
+    }
 }
 
 /// Encodes a failure reply as an opaque numeric code.
@@ -337,22 +378,15 @@ pub fn decode_reply(bytes: &[u8]) -> Result<DecodedReply, CodecError> {
 
     let decoded = match reader.u8()? {
         reply_kind::ACCEPTED => DecodedReply::Ok(ControlReply::Accepted),
-        reply_kind::STATUS => {
-            let status = match reader.u8()? {
-                1 => AgentStatus::Starting,
-                2 => AgentStatus::Idle,
-                3 => AgentStatus::Busy,
-                4 => AgentStatus::Stopped,
-                got => {
-                    return Err(CodecError::Discriminant {
-                        field: "agent status",
-                        got,
-                    });
-                }
-            };
-            DecodedReply::Ok(ControlReply::Status(status))
-        }
+        reply_kind::STATUS => DecodedReply::Ok(ControlReply::Status(read_status(&mut reader)?)),
         reply_kind::OUTPUT => DecodedReply::Ok(ControlReply::Output(read_payload(&mut reader)?)),
+        reply_kind::PARTIAL => {
+            let status = read_status(&mut reader)?;
+            DecodedReply::Ok(ControlReply::Partial {
+                output: read_payload(&mut reader)?,
+                status,
+            })
+        }
         reply_kind::ERROR => DecodedReply::Err(reader.u8()?),
         got => {
             return Err(CodecError::Discriminant {

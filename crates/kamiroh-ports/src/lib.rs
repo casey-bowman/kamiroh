@@ -18,12 +18,14 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod agent;
 pub mod allowlist;
 pub mod control_api;
 pub mod controller;
 pub mod key_store;
 pub mod transport;
 
+pub use agent::{Agent, AgentError, AgentOutcome};
 pub use allowlist::Allowlist;
 pub use control_api::{ControlApi, ControlApiError, Origin};
 pub use controller::{AgentController, ControllerError};

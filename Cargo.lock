@@ -1658,6 +1658,7 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "kameo",
+ "kamiroh-adapter-memory",
  "kamiroh-domain",
  "kamiroh-ports",
  "tokio",

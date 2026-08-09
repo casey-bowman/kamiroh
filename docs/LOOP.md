@@ -24,11 +24,67 @@ Every driven port resolves to an adapter that touches the world.
 `kamiroh-adapter-memory` is now test doubles plus one production caller:
 `InMemoryAllowlist`, for the `KAMIROH_ALLOW` override.
 
-**The one stand-in left is the agent itself.** `EchoAgent` returns its prompt.
-Everything underneath it — identity, allowlist, transport, front, controller
-actors, console — is real. See *Next slice*.
+**M1 removed the last stand-in.** With `KAMIROH_AGENT_TARGET` set, a prompt
+reaches a coding agent that Herdr is managing. `EchoAgent` remains for nodes
+with no agent runtime, and for tests.
 
 ## Done
+
+**M1 — a real agent**
+
+`HerdrAgent`: a prompt goes to a coding agent in a Herdr pane and what it says
+comes back. `agent.prompt` with a bounded wait, then `agent.read`, then an
+`AgentOutcome`. kamiroh does not start, supervise or parse the agent — Herdr
+does the first two and nobody does the third.
+
+**The domain changed for the first time since slice B**, exactly as planned, and
+the three-part decision held up:
+
+| | change | where |
+|---|---|---|
+| 1 | `Agent::run` returns an outcome, and is fallible | ports |
+| 2 | `AgentStatus::Blocked` | domain |
+| 3 | `ControlReply::Partial { output, status }` | domain |
+
+The compiler found all five propagation sites — `encode_reply`, `decode_reply`,
+`console::render`, `report::state_after`, and the pane-state mapping — which is
+what made the earlier "nine files across six crates" estimate wrong.
+
+`run` being **fallible** was not in the plan and should have been. Without it an
+unreachable Herdr socket could only be reported as agent *output*, which would
+arrive at the caller looking like something the agent said. Infrastructure
+failure and agent speech must not share a channel.
+
+**`Agent` moved to `kamiroh-ports`**, reversing the note written in slice G. That
+note argued the ports crate describes kamiroh's boundaries while `Agent`
+described how one adapter runs the thing behind one. True while a single crate
+both defined and implemented it; false the moment `kamiroh-adapter-herdr`
+arrived to implement it, since the alternative was an adapter depending on an
+adapter. `EchoAgent` moved to `kamiroh-adapter-memory` with it — an in-memory
+implementation of a driven port is what that crate is for.
+
+**The timeout collision was the predicted hazard and it was real.** The Iroh
+front gives a request 30s and the transport gives a reply 30s; a coding agent
+works for minutes. `DEFAULT_PATIENCE` is 20s, running out of it yields `Busy`
+plus whatever the agent had said, and a test pins the relationship so the two
+cannot drift apart silently.
+
+Two limits worth stating rather than hiding. `agent.read` returns the last N
+lines of a terminal, which has no marker for "this is the answer to that
+prompt", so what counts as output is a heuristic. And there is no verb for
+asking for the *rest* of a long answer — `ControlMessage` has none — so a caller
+prompts again and reads more, which is a workaround rather than a design.
+
+**Verified** by 9 `HerdrAgent` tests against a fake daemon covering every
+outcome path, 160 workspace-wide, plus live evidence that `agent.prompt` and
+`agent.read` are real methods whose parameters kamiroh's requests satisfy: the
+daemon rejected a custom-reported pane with `agent_not_ready` — "not an active
+named agent" — which is target resolution, downstream of method and parameter
+validation.
+
+**Not verified: a live end-to-end run.** Every kind Herdr can start is a real
+coding agent, so it would launch one in a live session and spend tokens. That
+needs a decision, not an assumption.
 
 **Slice J2 — reporting the pane's agent state to Herdr**
 

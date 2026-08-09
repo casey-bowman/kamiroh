@@ -15,7 +15,7 @@
 
 use std::sync::Arc;
 
-use kamiroh_domain::{ControlMessage, ControlReply, Payload};
+use kamiroh_domain::{AgentStatus, ControlMessage, ControlReply, Payload};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::link::Link;
@@ -139,16 +139,32 @@ fn render(reply: &ControlReply) -> String {
     match reply {
         ControlReply::Accepted => "ok".to_owned(),
         ControlReply::Status(status) => format!("{status:?}").to_lowercase(),
-        ControlReply::Output(payload) => match payload.as_text() {
-            Some(text) => text.to_owned(),
-            // Agents are agent-agnostic: a payload need not be text, and
-            // spraying arbitrary bytes at a terminal is how you lose a session.
-            None => format!(
-                "<{} bytes of {}>",
-                payload.bytes().len(),
-                payload.content_type()
-            ),
-        },
+        ControlReply::Output(payload) => render_payload(payload),
+        // The state is said out loud rather than shown as text, because the
+        // whole point of a partial reply is that the output alone would read
+        // as a finished answer.
+        ControlReply::Partial { output, status } => {
+            let note = match status {
+                AgentStatus::Blocked => "[waiting for you]",
+                AgentStatus::Busy => "[still working]",
+                other => return format!("{}\n[{other}]", render_payload(output)),
+            };
+            format!("{}\n{note}", render_payload(output))
+        }
+    }
+}
+
+/// Renders a payload as text where it is text, and as a summary where it is not.
+fn render_payload(payload: &Payload) -> String {
+    match payload.as_text() {
+        Some(text) => text.to_owned(),
+        // Agents are agent-agnostic: a payload need not be text, and spraying
+        // arbitrary bytes at a terminal is how you lose a session.
+        None => format!(
+            "<{} bytes of {}>",
+            payload.bytes().len(),
+            payload.content_type()
+        ),
     }
 }
 

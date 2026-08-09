@@ -85,7 +85,7 @@ crate.
 
 Ordered by what unblocks the most, with the riskiest design done first.
 
-### M1 — It does something real
+### ~~M1~~ — It does something real ✅ done
 
 *Prompt a real coding agent through kamiroh, on one machine.*
 
@@ -118,9 +118,13 @@ Iroh on the same LAN.
   Aborting mid-`agent.wait` must not leave the pane's agent in a state kamiroh
   then lies about.
 
-**Risk:** highest of the four milestones, which is why it is first. The output
-extraction is a heuristic over a terminal, and no amount of care makes that
-exact.
+**Outcome.** All four decisions landed as written, and the timeout one was
+indeed the one that bit: 20s patience under the front's 30s, pinned by a test.
+Two things the plan missed — `Agent::run` had to become *fallible* (an
+unreachable runtime must not arrive as agent speech), and `Agent` had to move to
+`kamiroh-ports` (a second adapter implementing it makes it a boundary). The
+output heuristic is as inexact as predicted and is documented as such in
+ARCHITECTURE.md §6e.
 
 ### M2 — It works from where I am
 

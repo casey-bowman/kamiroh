@@ -58,11 +58,11 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-domain` | Names, addresses, key material, control vocabulary | *nothing* (std only) |
 | `kamiroh-ports` | Port traits + per-port error types | domain, `async-trait`, `thiserror` |
 | `kamiroh-app` | Use cases against ports | domain, ports, `async-trait` |
-| `kamiroh-adapter-memory` | In-memory implementation of every driven port | domain, ports, `async-trait` |
+| `kamiroh-adapter-memory` | In-memory implementation of every driven port, incl. `EchoAgent` | domain, ports, `async-trait` |
 | `kamiroh-adapter-fs` | Node key custody and the allowlist, on disk | domain, ports, `async-trait`, `getrandom`, `thiserror` |
 | `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport and inbound front (F2) | domain, ports, `iroh-base`, `iroh` |
 | `kamiroh-adapter-kameo` | One controller actor per agent | domain, ports, `async-trait`, `tokio`, `kameo` |
-| `kamiroh-adapter-herdr` | The pane console, and reporting its state to Herdr | domain, ports, `async-trait`, `thiserror`, `tokio`, `serde_json` |
+| `kamiroh-adapter-herdr` | The pane console, reporting, and the Herdr-managed agent | domain, ports, `async-trait`, `thiserror`, `tokio`, `serde_json` |
 | `kamiroh` | Composition root (binary) | all of the above, `tokio` |
 
 `kamiroh-adapter-iroh` depends on `iroh-base` with `default-features = false,
@@ -180,6 +180,25 @@ decision at all — it is the *far end's* allowlist that judges it, which is why
 | `Allowlist` | `is_allowed(&EndpointId) -> bool` | Sync, infallible, deny-by-default |
 | `KeyStore` | `load_or_create() -> NodeSecret` | Returns domain-typed key material |
 | `AgentController` | `dispatch(agent, message) -> ControlReply` | The message path to the actor, not the actor |
+| `Agent` | `run(prompt) -> Result<AgentOutcome, AgentError>` | The work itself. Added in M1 — see below |
+
+**`Agent` was an adapter trait until M1.** It lived in `kamiroh-adapter-kameo`
+from slice G, with a note arguing it should stay there: promoting it would make
+every future controller adapter adopt one notion of "an agent". That held while
+one crate both defined and implemented it, and stopped holding when
+`kamiroh-adapter-herdr` arrived to implement it. A trait that one adapter drives
+and another satisfies is a boundary, and the alternative was an adapter
+depending on an adapter. The agnosticism concern survives the move intact:
+nothing in the port says what an agent *does*.
+
+Two consequences worth stating, because both were easy to get wrong:
+
+- **`run` is fallible.** An agent runtime that cannot be reached must be an
+  `AgentError`, never an empty `AgentOutcome` — otherwise an infrastructure
+  failure arrives at the caller looking like something the agent said.
+- **Returning is not a claim of completion.** `AgentOutcome` carries a status,
+  and the controller turns anything short of `Idle` into `ControlReply::Partial`
+  rather than `Output`.
 
 ### Three decisions worth recording
 
@@ -442,6 +461,34 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 
 ---
 
+## 6e. Agent runtime rules
+
+Enforced by `kamiroh-adapter-herdr`'s `HerdrAgent` and pinned by its tests:
+
+- **Patience is set by the most impatient caller.** The Iroh front gives a
+  request 30s and the transport gives a reply 30s, so an agent that waits longer
+  is answered by a timeout instead of by the agent. `DEFAULT_PATIENCE` is 20s,
+  and a test asserts it stays under the front's timeout.
+- **Running out of patience is not a failure.** It produces `AgentStatus::Busy`
+  and whatever the agent had said by then, as a `Partial` reply.
+- **Herdr not knowing is not kamiroh claiming completion.** An `unknown` state
+  becomes `Busy`, not `Idle` — the same rule as §6d, applied to the agent rather
+  than the pane.
+- **A non-text prompt is refused, not typed at a terminal.** A pane takes
+  keystrokes; sending arbitrary bytes and calling the result an answer is worse
+  than saying no.
+- **kamiroh does not start, supervise or parse the agent.** Herdr does the first
+  two; nobody does the third. The output stays an opaque `Payload` all the way
+  out to the peer.
+
+**Two limits, stated rather than hidden.** `agent.read` returns the last N lines
+of a pane, and a terminal has no marker for "this is the answer to that prompt"
+— so what counts as output is a heuristic and may include the prompt's own echo.
+And there is no way to ask for the *rest* of a long answer, because
+`ControlMessage` has no verb for it; a caller can prompt again and read more,
+which is a workaround rather than a design. Adding that verb wants a real
+long-running agent to inform it.
+
 ## 7. Where the next slices attach
 
 | Slice | Crate | Attaches at |
@@ -456,6 +503,7 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 | ~~J1~~ | `kamiroh-adapter-herdr` | ✅ done — the pane console: one pane, one agent, local **or remote** |
 | | | ⚠ The row above used to read "a second front calling the same `ControlApi`", which is half the story. See §3a. |
 | ~~J2~~ | `kamiroh-adapter-herdr` | ✅ done — reports the pane's agent state via `pane.report_agent`; see §6d |
+| ~~M1~~ | `kamiroh-adapter-herdr` | ✅ done — `HerdrAgent`: a real coding agent behind the `Agent` port; see §6e |
 
 Each is a constructor swap in `crates/kamiroh/src/main.rs`. No slice above should
 require an app-layer or domain change; if one does, that is the signal to revisit

@@ -8,11 +8,13 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod agent;
 pub mod allowlist;
 pub mod controller;
 pub mod key_store;
 pub mod transport;
 
+pub use agent::EchoAgent;
 pub use allowlist::InMemoryAllowlist;
 pub use controller::EchoController;
 pub use key_store::InMemoryKeyStore;

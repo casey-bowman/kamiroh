@@ -43,6 +43,8 @@
 //! project's format to save one adapter-local crate is a bad trade.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
@@ -50,10 +52,15 @@ use tokio::net::UnixStream;
 use crate::pane::{PaneAgentState, REPORT_SOURCE};
 
 /// Talks to one Herdr session socket, a connection at a time.
-#[derive(Debug, Clone)]
+///
+/// Every method takes `&self`: [`Agent::run`](kamiroh_ports::Agent::run) does,
+/// so anything reachable from an agent must too. The request counter is atomic
+/// rather than the whole client being behind a lock, so two calls can be in
+/// flight at once — which they are, since each has its own connection anyway.
+#[derive(Debug)]
 pub struct Client {
     socket: PathBuf,
-    next_id: u64,
+    next_id: AtomicU64,
 }
 
 impl Client {
@@ -61,36 +68,113 @@ impl Client {
     pub fn new(socket: impl Into<PathBuf>) -> Self {
         Self {
             socket: socket.into(),
-            next_id: 1,
+            next_id: AtomicU64::new(1),
         }
     }
 
     /// Reports `agent`'s state for `pane_id`.
     pub async fn report_agent(
-        &mut self,
+        &self,
         pane_id: &str,
         agent: &str,
         state: PaneAgentState,
     ) -> Result<(), ClientError> {
-        let id = self.next_id.to_string();
-        self.next_id += 1;
-
-        let request = serde_json::json!({
-            "id": id,
-            "method": "pane.report_agent",
-            "params": {
+        self.request(
+            "pane.report_agent",
+            serde_json::json!({
                 "pane_id": pane_id,
                 "source": REPORT_SOURCE,
                 "agent": agent,
                 "state": state.as_str(),
-            }
-        });
+            }),
+        )
+        .await?;
+        Ok(())
+    }
 
-        self.request(&request).await
+    /// Prompts a Herdr-managed agent and waits for it to settle.
+    ///
+    /// Returns the state it settled in. `patience` bounds the wait; hitting it
+    /// is not an error, it means the agent is still working.
+    pub async fn prompt_agent(
+        &self,
+        target: &str,
+        text: &str,
+        patience: Duration,
+        until: &[PaneAgentState],
+    ) -> Result<PaneAgentState, ClientError> {
+        let until: Vec<&str> = until.iter().map(|state| state.as_str()).collect();
+        let result = self
+            .request(
+                "agent.prompt",
+                serde_json::json!({
+                    "target": target,
+                    "text": text,
+                    "wait": {
+                        "until": until,
+                        "timeout_ms": patience.as_millis() as u64,
+                    },
+                }),
+            )
+            .await?;
+
+        // `agent.prompt` answers with the agent's info, so the state after
+        // waiting comes back in the same round trip.
+        Ok(PaneAgentState::from_wire(
+            result
+                .get("agent")
+                .and_then(|agent| agent.get("agent_status"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown"),
+        ))
+    }
+
+    /// Reads the last `lines` of what a Herdr-managed agent has produced.
+    pub async fn read_agent(&self, target: &str, lines: u32) -> Result<String, ClientError> {
+        let result = self
+            .request(
+                "agent.read",
+                serde_json::json!({
+                    "target": target,
+                    // `recent` rather than `visible`: what the agent produced,
+                    // not what happens to fit on the screen right now.
+                    "source": "recent",
+                    "lines": lines,
+                    "strip_ansi": true,
+                }),
+            )
+            .await?;
+
+        Ok(result
+            .get("read")
+            .and_then(|read| read.get("text"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default()
+            .to_owned())
     }
 
     /// Opens a connection, writes one request, reads the one response.
-    async fn request(&self, request: &serde_json::Value) -> Result<(), ClientError> {
+    ///
+    /// Returns the `result` object, which every caller here reads a field out
+    /// of.
+    async fn request(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, ClientError> {
+        let request = serde_json::json!({
+            "id": self.next_id.fetch_add(1, Ordering::Relaxed).to_string(),
+            "method": method,
+            "params": params,
+        });
+        self.round_trip(&request).await
+    }
+
+    /// One connection, one request, one response.
+    async fn round_trip(
+        &self,
+        request: &serde_json::Value,
+    ) -> Result<serde_json::Value, ClientError> {
         let stream =
             UnixStream::connect(&self.socket)
                 .await
@@ -121,7 +205,11 @@ impl Client {
                 message: field(error, "message"),
             });
         }
-        Ok(())
+
+        Ok(response
+            .get("result")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null))
     }
 
     /// The socket this client talks to.
@@ -182,7 +270,8 @@ pub enum ClientError {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
+    use std::collections::VecDeque;
     use std::sync::Arc;
 
     use tokio::net::UnixListener;
@@ -194,19 +283,25 @@ mod tests {
     /// connection, then close. That is the behaviour these tests exist to pin —
     /// a fake that kept the connection open would have hidden the bug this
     /// module was written around.
-    struct FakeHerdr {
+    pub(crate) struct FakeHerdr {
         _dir: tempfile::TempDir,
-        path: PathBuf,
+        pub(crate) path: PathBuf,
         seen: Arc<Mutex<Vec<serde_json::Value>>>,
     }
 
     impl FakeHerdr {
-        async fn replying(reply: &'static str) -> Self {
+        /// Answers each connection with the next scripted reply, in order.
+        ///
+        /// A vector rather than one canned answer because a single
+        /// `HerdrAgent::run` is two round trips — `agent.prompt` then
+        /// `agent.read` — and they must be able to differ.
+        pub(crate) async fn scripted(replies: Vec<String>) -> Self {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("herdr.sock");
             let listener = UnixListener::bind(&path).unwrap();
             let seen = Arc::new(Mutex::new(Vec::new()));
             let recorder = Arc::clone(&seen);
+            let queue = Arc::new(Mutex::new(replies.into_iter().collect::<VecDeque<_>>()));
 
             tokio::spawn(async move {
                 loop {
@@ -223,9 +318,11 @@ mod tests {
                         .await
                         .push(serde_json::from_str(&line).unwrap());
 
-                    let mut response = reply.to_owned();
-                    response.push('\n');
-                    let _ = stream.get_mut().write_all(response.as_bytes()).await;
+                    let next = queue.lock().await.pop_front();
+                    if let Some(mut response) = next {
+                        response.push('\n');
+                        let _ = stream.get_mut().write_all(response.as_bytes()).await;
+                    }
                     // Closed by dropping `stream`, exactly as Herdr does.
                 }
             });
@@ -237,11 +334,21 @@ mod tests {
             }
         }
 
+        /// Answers every connection with the same reply.
+        async fn replying(reply: &'static str) -> Self {
+            // Enough for any test here; the loop simply stops answering after.
+            Self::scripted(vec![reply.to_owned(); 8]).await
+        }
+
         async fn ok() -> Self {
             Self::replying(r#"{"id":"1","result":{}}"#).await
         }
 
-        async fn requests(&self) -> Vec<serde_json::Value> {
+        pub(crate) fn path(&self) -> &Path {
+            &self.path
+        }
+
+        pub(crate) async fn requests(&self) -> Vec<serde_json::Value> {
             self.seen.lock().await.clone()
         }
     }
@@ -249,7 +356,7 @@ mod tests {
     #[tokio::test]
     async fn a_report_is_sent_in_the_shape_herdr_documents() {
         let herdr = FakeHerdr::ok().await;
-        let mut client = Client::new(&herdr.path);
+        let client = Client::new(&herdr.path);
 
         client
             .report_agent("w1:p1", "agent", PaneAgentState::Working)
@@ -272,7 +379,7 @@ mod tests {
     #[tokio::test]
     async fn many_reports_succeed_although_herdr_closes_after_each() {
         let herdr = FakeHerdr::ok().await;
-        let mut client = Client::new(&herdr.path);
+        let client = Client::new(&herdr.path);
 
         for state in [
             PaneAgentState::Idle,
@@ -292,7 +399,7 @@ mod tests {
     #[tokio::test]
     async fn ids_are_distinct_across_requests() {
         let herdr = FakeHerdr::ok().await;
-        let mut client = Client::new(&herdr.path);
+        let client = Client::new(&herdr.path);
 
         for _ in 0..3 {
             client
@@ -317,7 +424,7 @@ mod tests {
             r#"{"id":"1","error":{"code":"pane_not_found","message":"pane w9:p9 not found"}}"#,
         )
         .await;
-        let mut client = Client::new(&herdr.path);
+        let client = Client::new(&herdr.path);
 
         let error = client
             .report_agent("w9:p9", "agent", PaneAgentState::Idle)
@@ -334,7 +441,7 @@ mod tests {
     #[tokio::test]
     async fn a_missing_socket_is_a_connect_error_not_a_panic() {
         let dir = tempfile::tempdir().unwrap();
-        let mut client = Client::new(dir.path().join("absent.sock"));
+        let client = Client::new(dir.path().join("absent.sock"));
 
         let error = client
             .report_agent("w1:p1", "agent", PaneAgentState::Idle)
@@ -347,7 +454,7 @@ mod tests {
     #[tokio::test]
     async fn a_pane_id_with_json_metacharacters_is_escaped() {
         let herdr = FakeHerdr::ok().await;
-        let mut client = Client::new(&herdr.path);
+        let client = Client::new(&herdr.path);
 
         let hostile = r#"w1:p1","x":"injected"#;
         client

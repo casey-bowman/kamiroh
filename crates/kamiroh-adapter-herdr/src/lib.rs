@@ -65,6 +65,9 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+/// The Herdr-managed agent. Unix only, like the socket it drives.
+#[cfg(unix)]
+pub mod agent;
 pub mod console;
 pub mod link;
 pub mod pane;
@@ -74,6 +77,31 @@ pub mod report;
 #[cfg(unix)]
 pub mod client;
 
+#[cfg(unix)]
+pub use agent::HerdrAgent;
 pub use link::{Link, LinkError, LocalLink, RemoteLink};
 pub use pane::{Pane, PaneAgentState};
 pub use report::ReportingLink;
+
+/// Builds an agent driving the Herdr agent named by `target`, if one is
+/// possible in this process.
+///
+/// `target` is a pane id (`w1:p2`) or an agent name, as Herdr accepts either.
+/// Returns `None` where there is no socket to reach, or on a platform whose
+/// Herdr socket is a named pipe this crate does not speak — so a caller can
+/// fall back without knowing which of those it was.
+pub fn herdr_agent(target: &str) -> Option<std::sync::Arc<dyn kamiroh_ports::Agent>> {
+    #[cfg(unix)]
+    {
+        let socket = pane::socket_path()?;
+        Some(std::sync::Arc::new(agent::HerdrAgent::new(
+            client::Client::new(socket),
+            target,
+        )))
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = target;
+        None
+    }
+}

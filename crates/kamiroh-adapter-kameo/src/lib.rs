@@ -22,14 +22,20 @@
 //!
 //! # Agents
 //!
-//! [`Agent`] is the seam for the work itself. [`EchoAgent`] returns its prompt
-//! and is the stand-in until a real agent runtime lands; the controller around
-//! it is not a stand-in.
+//! This crate drives [`Agent`](kamiroh_ports::Agent) but no longer defines it:
+//! the trait moved to `kamiroh-ports` in M1, when a second adapter arrived to
+//! implement it. `EchoAgent` moved with it, to the test-double crate.
+//!
+//! An agent's run does not have to finish. `AgentOutcome` carries where it
+//! ended up, and the actor turns anything short of finished into
+//! [`ControlReply::Partial`](kamiroh_domain::ControlReply::Partial) rather than
+//! claiming an answer is complete.
 //!
 //! ```no_run
 //! use std::sync::Arc;
 //!
-//! use kamiroh_adapter_kameo::{EchoAgent, KameoController};
+//! use kamiroh_adapter_kameo::KameoController;
+//! use kamiroh_adapter_memory::EchoAgent;
 //! use kamiroh_domain::ActorName;
 //! use kamiroh_ports::AgentController;
 //!
@@ -44,10 +50,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-pub mod agent;
 pub mod controller;
 
 mod actor;
 
-pub use agent::{Agent, EchoAgent};
 pub use controller::KameoController;

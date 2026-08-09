@@ -15,10 +15,8 @@ use kameo::error::Infallible;
 use kameo::message::{Context, Message};
 use kameo::reply::{DelegatedReply, ReplySender};
 use kamiroh_domain::{ActorName, AgentStatus, ControlMessage, ControlReply, Payload};
-use kamiroh_ports::ControllerError;
+use kamiroh_ports::{Agent, AgentError, AgentOutcome, ControllerError};
 use tokio::task::AbortHandle;
-
-use crate::agent::Agent;
 
 /// What a controller actor answers with. The error half is the port's own error
 /// type, so nothing has to be translated on the way back out to `ControlApi`.
@@ -91,11 +89,11 @@ impl AgentActor {
         let actor = ctx.actor_ref();
 
         let task = tokio::spawn(async move {
-            let output = agent.run(prompt).await;
+            let outcome = agent.run(prompt).await; // Result; the actor decides what it means
             // Back through the mailbox, so this transition is ordered against
             // Interrupt and Shutdown instead of racing them. A send failure
             // means the actor is already gone, which is not ours to report.
-            let _ = actor.tell(Finished(output)).await;
+            let _ = actor.tell(Finished(outcome)).await;
         });
 
         self.status = AgentStatus::Busy;
@@ -177,21 +175,55 @@ impl Message<ControlMessage> for AgentActor {
     }
 }
 
-/// The agent finished a prompt. Internal: sent by the task, never from outside.
-struct Finished(Payload);
+/// A run came back. Internal: sent by the task, never from outside.
+///
+/// "Finished" names the *run*, not the agent — a run can end with the agent
+/// blocked or still working, which is the whole point of [`AgentOutcome`].
+struct Finished(Result<AgentOutcome, AgentError>);
 
 impl Message<Finished> for AgentActor {
     type Reply = ();
 
-    async fn handle(&mut self, Finished(output): Finished, _ctx: &mut Context<Self, Self::Reply>) {
+    async fn handle(&mut self, Finished(result): Finished, _ctx: &mut Context<Self, Self::Reply>) {
         // Absent when an interrupt got here first and already answered the
         // caller. The abort races the agent's last step, so this is normal.
         let Some(running) = self.running.take() else {
             return;
         };
-        self.status = AgentStatus::Idle;
+
+        let answer = match result {
+            Ok(outcome) => {
+                // The agent is the authority on where it ended up. Assuming
+                // `Idle` is what made a blocked agent indistinguishable from a
+                // finished one.
+                self.status = outcome.status;
+                Ok(reply_for(outcome))
+            }
+            Err(error) => {
+                // The runtime failed, so the agent's state is not something we
+                // know — and claiming `Idle` would invite another prompt into
+                // the same failure.
+                self.status = AgentStatus::Idle;
+                Err(ControllerError::Backend(Box::new(error)))
+            }
+        };
+
         if let Some(reply) = running.reply {
-            reply.send(Ok(ControlReply::Output(output)));
+            reply.send(answer);
+        }
+    }
+}
+
+/// Turns an outcome into the narrowest reply that is still true.
+///
+/// `Output` claims the agent is done, so it is only used when it is.
+fn reply_for(outcome: AgentOutcome) -> ControlReply {
+    if outcome.is_finished() {
+        ControlReply::Output(outcome.output)
+    } else {
+        ControlReply::Partial {
+            output: outcome.output,
+            status: outcome.status,
         }
     }
 }

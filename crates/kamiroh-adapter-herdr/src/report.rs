@@ -112,6 +112,11 @@ fn state_after(kind: Kind, result: &Result<ControlReply, LinkError>) -> PaneAgen
         Err(_) => PaneAgentState::Unknown,
         // The agent said what it is doing; nothing beats asking.
         Ok(ControlReply::Status(status)) => (*status).into(),
+        // A partial reply carries the reason it is partial. This is the case
+        // the whole `Partial` variant exists for: without it a blocked agent
+        // came back as `Output` and got reported `idle` — a guess presented as
+        // a fact, which is what §6d forbids.
+        Ok(ControlReply::Partial { status, .. }) => (*status).into(),
         Ok(ControlReply::Output(_)) => PaneAgentState::Idle,
         Ok(ControlReply::Accepted) => match kind {
             Kind::Shutdown => PaneAgentState::Done,
@@ -163,7 +168,7 @@ pub fn attach(link: Arc<dyn Link>, _agent: &ActorName) -> (Arc<dyn Link>, String
 /// logic to get wrong.
 #[cfg(unix)]
 async fn run(pane: Pane, agent: String, mut reports: mpsc::Receiver<PaneAgentState>) {
-    let mut client = crate::client::Client::new(&pane.socket);
+    let client = crate::client::Client::new(&pane.socket);
     // Herdr going away should cost one line, not one line per update. Reset on
     // success so that a later outage is reported again.
     let mut complained = false;

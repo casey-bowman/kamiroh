@@ -8,10 +8,9 @@ use kameo::Actor;
 use kameo::actor::ActorRef;
 use kameo::error::SendError;
 use kamiroh_domain::{ActorName, ControlMessage, ControlReply};
-use kamiroh_ports::{AgentController, ControllerError};
+use kamiroh_ports::{Agent, AgentController, ControllerError};
 
 use crate::actor::AgentActor;
-use crate::agent::Agent;
 
 /// Routes control messages to one controller actor per agent.
 ///
@@ -119,10 +118,11 @@ mod tests {
     use std::time::Duration;
 
     use kamiroh_domain::{AgentStatus, Payload};
+    use kamiroh_ports::{AgentError, AgentOutcome};
     use tokio::sync::Notify;
 
     use super::*;
-    use crate::agent::EchoAgent;
+    use kamiroh_adapter_memory::EchoAgent;
 
     fn agent() -> ActorName {
         ActorName::new("agent").unwrap()
@@ -169,11 +169,11 @@ mod tests {
 
     #[async_trait]
     impl Agent for GatedAgent {
-        async fn run(&self, prompt: Payload) -> Payload {
+        async fn run(&self, prompt: Payload) -> Result<AgentOutcome, AgentError> {
             self.started.notify_one();
             self.release.notified().await;
             self.completed.fetch_add(1, Ordering::SeqCst);
-            prompt
+            Ok(AgentOutcome::finished(prompt))
         }
     }
 
