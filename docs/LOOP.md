@@ -30,6 +30,51 @@ with no agent runtime, and for tests.
 
 ## Done
 
+**M3 — several agents, and a second agent kind**
+
+An `agents` file next to `allow` and `node.key`: `<name> <target>` per line.
+`KAMIROH_AGENT_TARGET` still overrides it with a single agent, the same shape as
+`KAMIROH_ALLOW` overriding the allowlist — which is why every existing demo and
+test kept working untouched.
+
+Verified with two agents on one node, driven **by name** from a peer:
+
+```
+agents:      agent = echo, reviewer = echo
+"agent"     -> hello agent
+"reviewer"  -> hello reviewer
+"nonesuch"  -> no actor named nonesuch on peer be3ec8be…
+```
+
+`KAMIROH_PEER_AGENT` names the agent to address on the peer, because a home node
+hosting `reviewer` cannot be driven by a laptop whose pane agent is `agent`
+without saying so. The demo then caught an inconsistency: the startup greet was
+still probing this node's *own* agent name, so a pane bound to a peer's
+`nonesuch` reported a healthy greet against `agent` — a reachability check for a
+different thing than the one you are about to use. Greet now probes the same
+agent the pane will drive.
+
+**A pane still shows one agent**, so the reporter filters to the pane's own.
+Letting every hosted agent report would have them overwrite each other in
+Herdr's list, which tells an operator less than reporting nothing.
+
+**The second agent kind found what it was meant to find.** `codex` is installed,
+so the per-kind risk was testable rather than only guardable. Started in a fresh
+directory it shows its own confirmation prompt — and **Herdr reports that as
+`idle`, where the equivalent `claude` prompt is `blocked`**. The same situation,
+two answers, and the wrong one is wrong in the dangerous direction: kamiroh
+would call a stuck agent ready.
+
+This is Herdr's detection manifest, not something kamiroh can fix from its side.
+Inferring state from terminal output would mean a parser per kind, which is
+precisely what agent-agnostic forbids. So it is recorded as a limitation in
+ARCHITECTURE.md §6e: the accuracy of `Blocked` is Herdr's to own, and kamiroh's
+job is not to make it worse. Worth knowing before trusting a sidebar.
+
+One smaller thing, found by a test whose own input made the mistake: a target
+containing spaces is now refused, because `my agent w1:p2` otherwise parses as
+the agent `my` with target `agent w1:p2` — accepted, wrong, and silent.
+
 **M4 — the rest: reporting from both directions, reload, and the nits**
 
 **A serving node's pane was permanently idle.** J2 decorated `Link`, which is

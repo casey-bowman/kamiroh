@@ -183,7 +183,7 @@ the first time you actually sit in a cafe, rather than simulating it.
 This remains the milestone that most deserves the advisor gate: the reasoning in
 ARCHITECTURE.md §5a has been read by nobody but its author.
 
-### M3 — More than one agent
+### ~~M3~~ — More than one agent ✅ done
 
 *Because the addressing model has always claimed it.*
 
@@ -197,10 +197,16 @@ config — a name, and what to start it as.
 whether kamiroh starts agents (`agent.start`) or only attaches to ones already
 running. Prefer attach-only first: starting things is where lifecycle bugs live.
 
-**Also in scope: a second agent kind.** M1 exercised only `claude`. Whether
-`[idle, blocked, done]` is the right wait list for `codex` or `gemini` is
-unknown, and a per-kind difference there is a silent wrong answer rather than a
-loud failure.
+**Outcome.** Agents come from a file; `KAMIROH_AGENT_TARGET` still overrides it,
+which kept every demo working. Two agents on one node, driven by name from a
+peer, with an unknown name correctly refused. Attach-only as recommended —
+kamiroh does not call `agent.start`.
+
+**The second kind found a real per-kind difference, as feared.** A startup
+confirmation prompt is `blocked` for `claude` and `idle` for `codex`. kamiroh
+reports what Herdr detects and does not second-guess it, so this is a documented
+limitation (§6e) rather than a bug kamiroh can fix — inferring state from
+terminal output would mean a parser per kind, which agent-agnostic forbids.
 
 **Answered: a remote operator *can* unblock an agent.** Tested against a
 workspace-trust dialog in an unapproved directory — `/status` reported

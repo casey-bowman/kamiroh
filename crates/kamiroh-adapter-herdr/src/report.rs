@@ -178,13 +178,20 @@ impl Reporter {
     ///
     /// This is the half a serving node needs: its pane has nobody at it, and
     /// the messages arrive through the Iroh front.
+    /// Reports only what happens to `agent` — the one this pane shows.
+    ///
+    /// A node may host several; a pane displays one. Reporting all of them
+    /// would have them overwrite each other in Herdr's list, which tells an
+    /// operator less than reporting nothing at all.
     pub fn wrap_controller(
         &self,
         controller: Arc<dyn AgentController>,
+        agent: ActorName,
     ) -> Arc<dyn AgentController> {
         Arc::new(ReportingController {
             inner: controller,
             reports: self.reports.clone(),
+            reported: agent,
         })
     }
 }
@@ -193,6 +200,8 @@ impl Reporter {
 struct ReportingController {
     inner: Arc<dyn AgentController>,
     reports: mpsc::Sender<PaneAgentState>,
+    /// The only agent whose state this pane shows.
+    reported: ActorName,
 }
 
 #[async_trait]
@@ -203,11 +212,15 @@ impl AgentController for ReportingController {
         message: ControlMessage,
     ) -> Result<ControlReply, ControllerError> {
         let kind = Kind::of(&message);
-        if matches!(kind, Kind::Prompt) {
+        let mine = *agent == self.reported;
+        if mine && matches!(kind, Kind::Prompt) {
             let _ = self.reports.try_send(PaneAgentState::Working);
         }
 
         let result = self.inner.dispatch(agent, message).await;
+        if !mine {
+            return result;
+        }
 
         // The controller's error type differs from a link's, but the question
         // is the same one: what does this reply say the agent is doing?
@@ -387,13 +400,14 @@ mod tests {
             }
         }
 
+        let agent = ActorName::new("agent").unwrap();
         let (sender, mut receiver) = mpsc::channel(BACKLOG);
         let controller = ReportingController {
             inner: Arc::new(StubController),
             reports: sender,
+            reported: agent.clone(),
         };
 
-        let agent = ActorName::new("agent").unwrap();
         controller
             .dispatch(&agent, ControlMessage::Prompt(Payload::text("go")))
             .await
@@ -409,6 +423,49 @@ mod tests {
 
     /// Both halves feed one channel, so their reports cannot race — which is
     /// why no `seq` is needed to order them.
+    /// A node may host several agents; a pane shows one. Work on the others
+    /// must not overwrite it.
+    #[tokio::test]
+    async fn another_agents_work_is_not_reported_to_this_pane() {
+        use kamiroh_domain::ActorName;
+
+        struct StubController;
+
+        #[async_trait]
+        impl AgentController for StubController {
+            async fn dispatch(
+                &self,
+                _agent: &ActorName,
+                _message: ControlMessage,
+            ) -> Result<ControlReply, ControllerError> {
+                Ok(ControlReply::Output(Payload::text("done")))
+            }
+        }
+
+        let (sender, mut receiver) = mpsc::channel(BACKLOG);
+        let controller = ReportingController {
+            inner: Arc::new(StubController),
+            reports: sender,
+            reported: ActorName::new("mine").unwrap(),
+        };
+
+        let other = ActorName::new("theirs").unwrap();
+        controller
+            .dispatch(&other, ControlMessage::Prompt(Payload::text("go")))
+            .await
+            .unwrap();
+        drop(controller);
+
+        let mut seen = Vec::new();
+        while let Some(state) = receiver.recv().await {
+            seen.push(state);
+        }
+        assert!(
+            seen.is_empty(),
+            "another agent's work was reported: {seen:?}"
+        );
+    }
+
     #[tokio::test]
     async fn both_decorators_share_one_stream_of_reports() {
         let (sender, mut receiver) = mpsc::channel(BACKLOG);

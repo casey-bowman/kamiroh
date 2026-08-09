@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use kamiroh_adapter_fs::{FileAllowlist, FileKeyStore};
+use kamiroh_adapter_fs::{AgentSpec, FileAllowlist, FileKeyStore, agents};
 use kamiroh_adapter_herdr::{Link, LocalLink, RemoteLink, console, report};
 use kamiroh_adapter_iroh::{
     EndpointAddr, IrohTransport, Reach, bind_endpoint, endpoint_id_for, front, peer_address,
@@ -42,7 +42,7 @@ use kamiroh_adapter_memory::{EchoAgent, InMemoryAllowlist};
 use kamiroh_app::ControlService;
 use kamiroh_domain::{ActorName, ControlMessage, EndpointId, Payload, PeerAddress};
 use kamiroh_ports::{
-    AgentController, Allowlist, ControlApi, ControlApiError, KeyStore, Origin, Transport,
+    Agent, AgentController, Allowlist, ControlApi, ControlApiError, KeyStore, Origin, Transport,
 };
 
 /// Where the node secret lives.
@@ -53,8 +53,12 @@ const ALLOW_ENV: &str = "KAMIROH_ALLOW";
 const ALLOW_FILE_ENV: &str = "KAMIROH_ALLOW_FILE";
 /// A peer to greet on startup, as `<endpoint-id-hex>@<host:port>`.
 const PEER_ENV: &str = "KAMIROH_PEER";
-/// The Herdr-managed agent this node drives, if any.
+/// The Herdr-managed agent this node drives. Overrides the agents file.
 const AGENT_TARGET_ENV: &str = "KAMIROH_AGENT_TARGET";
+/// Which agents this node hosts.
+const AGENTS_FILE_ENV: &str = "KAMIROH_AGENTS_FILE";
+/// The agent name to address on the peer. Defaults to the pane's own agent.
+const PEER_AGENT_ENV: &str = "KAMIROH_PEER_AGENT";
 /// How far this node can be reached from: `direct` (default) or `anywhere`.
 const REACH_ENV: &str = "KAMIROH_REACH";
 /// Per-crate log filter, e.g. `kamiroh_adapter_iroh=debug,kamiroh_app=info`.
@@ -167,8 +171,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
         reload_allowlist_on_hangup(reloadable);
     }
 
-    let agent = ActorName::new("agent")?;
-    let (controller, agent_summary) = build_controller(&agent);
+    let hosted = build_agents()?;
+    // The pane binds to the first agent. One pane means one agent (slice J1),
+    // and *which* one has to be decided somewhere; the file's order is the
+    // operator's own statement of what matters most.
+    let agent = hosted
+        .first()
+        .map(|spec| spec.name.clone())
+        .unwrap_or(ActorName::new(agents::DEFAULT_AGENT)?);
+    let (controller, agent_summary) = build_controller(&hosted);
 
     // One reporter, fed from both directions. The console reports what a person
     // at this pane does; the controller reports what *anyone* does, which is
@@ -176,7 +187,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // arrives through the Iroh front.
     let reporter = report::Reporter::start(&agent);
     let controller = match &reporter {
-        Some((reporter, _)) => reporter.wrap_controller(controller),
+        // Reports are filtered to the pane's own agent: a pane shows one agent,
+        // so letting every hosted agent report would make them overwrite each
+        // other in Herdr's list rather than tell anyone anything.
+        Some((reporter, _)) => reporter.wrap_controller(controller, agent.clone()),
         None => controller,
     };
 
@@ -205,11 +219,17 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!("listening:   {listening:?}");
     println!("reach:       {}", reach.describe());
     println!("logging:     {logging} (to stderr)");
-    println!("agent:       {agent} — {agent_summary}");
+    println!("agents:      {agent_summary}");
+    println!("pane agent:  {agent}");
     println!("allowing:    {allow_summary}");
 
     local_smoke(control.as_ref(), &agent).await?;
 
+    // The greet must probe the agent the pane will drive, not this node's own
+    // name for one. Otherwise a pane bound to a peer's `reviewer` reports a
+    // healthy greet against its `agent`, which is a reachability check for a
+    // different thing than the one you are about to use.
+    let peer_agent = peer_agent(&agent)?;
     if let Some((peer_id, _)) = &peer {
         // Spawned, not awaited. An unreachable peer takes the full dial timeout
         // — 16 seconds, measured — and awaiting it here holds up the pane
@@ -217,9 +237,9 @@ async fn run() -> Result<(), Box<dyn Error>> {
         // laptop whose home node is asleep would look hung rather than offering
         // a prompt where `/status` explains the problem.
         let transport = Arc::clone(&transport);
-        let agent = agent.clone();
+        let target = peer_agent.clone();
         let peer_id = *peer_id;
-        tokio::spawn(async move { greet(transport.as_ref(), peer_id, &agent).await });
+        tokio::spawn(async move { greet(transport.as_ref(), peer_id, &target).await });
     }
 
     // --- The pane console ---------------------------------------------------
@@ -232,7 +252,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let link: Arc<dyn Link> = match &peer {
         Some((peer_id, _)) => Arc::new(RemoteLink::new(
             Arc::clone(&transport),
-            PeerAddress::new(*peer_id, agent.clone()),
+            // The peer names its own agents, and need not use ours.
+            PeerAddress::new(*peer_id, peer_agent.clone()),
         )),
         None => Arc::new(LocalLink::new(Arc::clone(&control), agent.clone())),
     };
@@ -281,28 +302,59 @@ async fn run() -> Result<(), Box<dyn Error>> {
 /// Refusing to start would be defensible, but unlike a malformed allowlist this
 /// is not a security boundary: the wrong answer here is a useless agent, not an
 /// admitted stranger.
-fn build_controller(agent: &ActorName) -> (Arc<dyn AgentController>, String) {
-    let target = std::env::var_os(AGENT_TARGET_ENV)
-        .map(|target| target.to_string_lossy().into_owned())
-        .filter(|target| !target.trim().is_empty());
+fn build_controller(hosted: &[AgentSpec]) -> (Arc<dyn AgentController>, String) {
+    let mut controller = KameoController::new();
+    let mut described = Vec::new();
 
-    let Some(target) = target else {
-        return (
-            Arc::new(KameoController::new().with_agent(agent.clone(), EchoAgent)),
-            format!("echo stand-in; set {AGENT_TARGET_ENV} to drive a Herdr agent"),
-        );
-    };
-
-    match kamiroh_adapter_herdr::herdr_agent(&target) {
-        Some(herdr) => (
-            Arc::new(KameoController::new().with_agent(agent.clone(), herdr)),
-            format!("Herdr agent {target}"),
-        ),
-        None => (
-            Arc::new(KameoController::new().with_agent(agent.clone(), EchoAgent)),
-            format!("echo stand-in; {AGENT_TARGET_ENV}={target} but no Herdr socket is reachable"),
-        ),
+    for spec in hosted {
+        // `echo` and an unreachable Herdr socket both land on the stand-in, but
+        // they are said differently: one was asked for, the other is a
+        // consolation, and an operator needs to tell those apart.
+        let (agent, description): (Arc<dyn Agent>, String) = if spec.is_echo() {
+            (Arc::new(EchoAgent), format!("{} = echo", spec.name))
+        } else {
+            match kamiroh_adapter_herdr::herdr_agent(&spec.target) {
+                Some(herdr) => (herdr, format!("{} = {}", spec.name, spec.target)),
+                None => (
+                    Arc::new(EchoAgent),
+                    format!("{} = echo (no Herdr socket for {})", spec.name, spec.target),
+                ),
+            }
+        };
+        controller.spawn(spec.name.clone(), agent);
+        described.push(description);
     }
+
+    let summary = if described.is_empty() {
+        "none — this node hosts no agents".to_owned()
+    } else {
+        described.join(", ")
+    };
+    (Arc::new(controller), summary)
+}
+
+/// Which agents this node hosts.
+///
+/// `KAMIROH_AGENT_TARGET` overrides the file with a single agent named
+/// `agent`, the same shape as `KAMIROH_ALLOW` overriding the allowlist: one
+/// variable to run a node without writing config, which is what every demo and
+/// test does.
+fn build_agents() -> Result<Vec<AgentSpec>, Box<dyn Error>> {
+    if let Some(target) = std::env::var_os(AGENT_TARGET_ENV)
+        .map(|target| target.to_string_lossy().into_owned())
+        .filter(|target| !target.trim().is_empty())
+    {
+        return Ok(vec![AgentSpec {
+            name: ActorName::new(agents::DEFAULT_AGENT)?,
+            target,
+        }]);
+    }
+
+    let path = match std::env::var_os(AGENTS_FILE_ENV) {
+        Some(path) => PathBuf::from(path),
+        None => agents::default_path()?,
+    };
+    Ok(agents::load(&path)?)
 }
 
 /// Resolves the allowlist, returning it and a line describing where it came
@@ -441,6 +493,19 @@ fn parse_peer() -> Result<Option<Peer>, Box<dyn Error>> {
     let id: EndpointId = id.trim().parse()?;
     let socket: SocketAddr = socket.trim().parse()?;
     Ok(Some((id, Some(peer_address(&id, socket)?))))
+}
+
+/// Which agent to address on the peer.
+///
+/// Defaults to this pane's own agent name, which is right when both ends are
+/// configured alike and wrong as soon as they are not — a home node hosting
+/// `reviewer` cannot be driven by a laptop whose pane agent is `agent` without
+/// saying so.
+fn peer_agent(local: &ActorName) -> Result<ActorName, Box<dyn Error>> {
+    match std::env::var_os(PEER_AGENT_ENV) {
+        Some(name) => Ok(ActorName::new(name.to_string_lossy().trim())?),
+        None => Ok(local.clone()),
+    }
 }
 
 /// Reads `KAMIROH_REACH`. Absent means [`Reach::Direct`].

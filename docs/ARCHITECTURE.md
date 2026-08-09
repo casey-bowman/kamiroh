@@ -59,7 +59,7 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-ports` | Port traits + per-port error types | domain, `async-trait`, `thiserror` |
 | `kamiroh-app` | Use cases against ports | domain, ports, `async-trait` |
 | `kamiroh-adapter-memory` | In-memory implementation of every driven port, incl. `EchoAgent` | domain, ports, `async-trait` |
-| `kamiroh-adapter-fs` | Node key custody and the allowlist, on disk | domain, ports, `async-trait`, `getrandom`, `thiserror` |
+| `kamiroh-adapter-fs` | Node key custody, the allowlist, and the agents file | domain, ports, `async-trait`, `getrandom`, `thiserror` |
 | `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport and inbound front (F2) | domain, ports, `iroh-base`, `iroh` |
 | `kamiroh-adapter-kameo` | One controller actor per agent | domain, ports, `async-trait`, `tokio`, `kameo` |
 | `kamiroh-adapter-herdr` | The pane console, reporting, and the Herdr-managed agent | domain, ports, `async-trait`, `thiserror`, `tokio`, `serde_json` |
@@ -479,6 +479,29 @@ remains available if a genuinely independent source ever appears.
 have them overwrite each other in the pane list, which is M3's problem to
 solve.
 
+## 6c2. Agent configuration rules
+
+Enforced by `kamiroh-adapter-fs`'s `agents` module and pinned by its tests:
+
+- **One agent per line, `<name> <target>`** — the allowlist's shape, so an
+  operator editing one need not learn a second format.
+- **The file says *what*, not *how*.** A target is an opaque string here;
+  resolving `w1:p2` to a Herdr pane, or `echo` to the stand-in, is the
+  composition root's business. Otherwise Herdr ends up in the filesystem adapter
+  and a second runtime has to be added in two places.
+- **A bad line rejects the whole file**, as with the allowlist: hosting *some*
+  of the agents an operator asked for is its own kind of wrong.
+- **A repeated name is refused.** The front routes by name, so two agents
+  sharing one is ambiguity, not untidiness.
+- **A target containing spaces is refused.** Without it, `my agent w1:p2` parses
+  as the agent `my` with target `agent w1:p2` — accepted, wrong, and silent.
+- **Absent means one agent, not none.** A node with no file hosts `agent`, which
+  is what every kamiroh node did before the file existed. An empty *file* is how
+  you ask for a node that hosts nothing.
+- **A pane still shows one agent.** The reporter filters to the pane's own
+  agent; letting every hosted agent report would have them overwrite each other
+  in Herdr's list, which tells an operator less than reporting nothing.
+
 ## 6d. Herdr reporting rules
 
 Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
@@ -556,6 +579,16 @@ Enforced by `kamiroh-adapter-herdr`'s `HerdrAgent` and pinned by its tests:
 - **kamiroh does not start, supervise or parse the agent.** Herdr does the first
   two; nobody does the third. The output stays an opaque `Payload` all the way
   out to the peer.
+
+**A third limit, and the one that bites hardest: detection quality differs per
+agent kind.** Herdr decides an agent's state from its own per-kind manifest, and
+those manifests are not equally good. Measured: a startup permission prompt is
+reported as `blocked` for `claude` and as `idle` for `codex` — the same
+situation, two different answers, and the second is wrong in the dangerous
+direction. kamiroh reports what Herdr detects and does not second-guess it:
+inferring state from terminal output would mean a parser per kind, which is
+exactly what agent-agnostic forbids. So the accuracy of `Blocked` is Herdr's to
+own, and kamiroh's job is not to make it worse.
 
 **Two limits, stated rather than hidden.** `agent.read` returns the last N lines
 of a pane, and a terminal has no marker for "this is the answer to that prompt"

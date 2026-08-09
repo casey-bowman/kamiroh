@@ -25,10 +25,12 @@
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod agents;
 pub mod allowlist;
 pub mod key_store;
 
 mod wipe;
 
+pub use agents::{AgentSpec, AgentsError};
 pub use allowlist::{AllowlistError, FileAllowlist};
 pub use key_store::FileKeyStore;
