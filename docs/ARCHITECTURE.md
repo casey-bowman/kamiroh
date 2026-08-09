@@ -143,10 +143,24 @@ the constructor was written for, so the rule is now:
 > `Origin::local_front()`. Any *transport* adapter appearing in that grep is
 > still a bug.
 
-The justification is that a pane is a process on this machine, started by
-whoever owns the node, so it is already inside the boundary the allowlist
-defends. Note that `RemoteLink`, in the same file, does **not** call it — the
-console does not get to vouch for the far end.
+Note that `RemoteLink`, in the same file, does **not** call it — the console
+does not get to vouch for the far end.
+
+**What local trust is actually granted to, stated precisely.** This used to read
+"a pane is a process on this machine, started by whoever owns the node, so it is
+inside the boundary the allowlist defends" — a claim about the *machine*, where
+the code has a property of a *file descriptor*. The composition root hands
+`console::serve` a reader over `tokio::io::stdin()`, and `LocalLink` stamps
+`Origin::local_front()` on everything that arrives there. So the allowlist
+bypass is granted to **whoever can write to this process's stdin**.
+
+On a desktop where a person opens a pane those two sets are the same, which is
+why the looser wording survived. They are not the same under a service manager
+holding the write end of a pipe, a shared account, or `kamiroh < file`. The
+narrower statement is the one to design against, because it is checkable: to
+know who holds local trust on a node, ask what is on the other end of its stdin.
+Recorded rather than fixed — the code is doing what it says, and whether that is
+the right grant is [open decision 3](./OPEN-DECISIONS.md).
 
 ### 3a. Fronts and consoles are not the same thing
 
@@ -301,6 +315,29 @@ the endpoint id can learn where the node is*, whether or not the allowlist would
 admit them. Reachable is not admitted — but "unlisted peers cannot even find me"
 stops being true, and that is a genuine change to a node's exposure.
 
+**Is it reversible?** The question opt-in raises and does not answer: once a node
+has published under its endpoint id, can it stop? Read out of `iroh 1.0.3`
+rather than assumed —
+
+| | |
+|---|---|
+| `DEFAULT_PKARR_TTL` | 30s — how long a resolver may cache the record |
+| `DEFAULT_REPUBLISH_INTERVAL` | 5 min — the node re-signs and re-publishes while it runs |
+
+Publishing is therefore a *refresh*, not a broadcast. It stops when the node
+stops or when `KAMIROH_REACH` goes back to `direct`, and downstream caches go
+stale within the TTL. **The exit does not require a new identity**, which is the
+outcome that matters: rotating the endpoint id would invalidate every peer's
+allowlist entry, so a disclosure that could only be undone that way would be
+effectively permanent for a fleet.
+
+**What is not established:** how long n0's pkarr relay *retains* the last signed
+packet after a node stops refreshing. That is the relay's retention policy, not
+something the client decides, and nothing in `iroh` states it. So the honest
+scope of "reversible" is: the addresses go stale on kamiroh's side promptly, and
+the residual — that a given endpoint id was seen and had these addresses — is
+n0's to answer for.
+
 **Which is why it is opt-in.** `KAMIROH_REACH` defaults to `direct`. A node does
 not start announcing where it lives because someone failed to set a variable,
 and the startup line always says which mode is in force. Tests and demos are
@@ -321,15 +358,22 @@ that is the honest summary.
 ```text
 key file:    ~/.config/kamiroh/node.key
 endpoint id: <64 hex chars — this node's ed25519 public key>
-agent:       agent
-prompt -> "hello"
+listening:   [<socket addresses>]
+reach:       direct only — no relays, no discovery, nothing published
+agents:      agent = echo
+pane agent:  agent
+allowing:    <peers, and where the list came from>
+local status -> Status(Idle)
 unlisted peer eeee…eeee -> refused
 ```
 
-The loopback transport delivers via `Origin::remote(local endpoint)`, so the
-smoke path exercises the real allowlist rather than bypassing it. The binary
-self-allows for that reason; a real node's allowlist is built from configured
-peers and does not contain itself.
+`local_smoke` runs **both** directions through `ControlService`. The first line
+is `Origin::local_front()` — the in-process front, so the allowlist is skipped
+by design and the reply proves the front→controller path. The second is
+`Origin::remote(0xee…)`, an endpoint no allowlist contains, and it must be
+refused; the binary treats anything else as a failure to start. So the node
+does **not** self-allow, and neither line depends on the loopback transport,
+which has been a test double since F2.
 
 **Real as of slice E:** key custody. The secret comes from OS entropy and lives
 in `$XDG_CONFIG_HOME/kamiroh/node.key` (or `$HOME/.config/...`), overridable
@@ -636,7 +680,7 @@ would be noise next to the events above. Revisit if an actor bug ever needs it.
 | ~~F1~~ | `kamiroh-adapter-iroh` | ✅ done — real `EndpointId` derivation; `placeholder_endpoint_for` deleted |
 | ~~F2~~ | `kamiroh-adapter-iroh` | ✅ done — `Transport` + an inbound front calling `ControlApi` with an authenticated peer |
 | | | Both obligations held. The enumeration one holds **by ordering, not by collapsing codes**: `REFUSED` and `NO_SUCH_ACTOR` are distinct on the wire, but authorisation runs before the actor is looked up, so an unlisted peer gets byte-identical `REFUSED` whether or not the agent it names exists. The distinction only ever reaches a peer already trusted. Pinned by `an_unlisted_peer_learns_nothing_beyond_refused`. |
-| | | `Origin` is built from the connection's authenticated peer; `grep -rn local_front crates/` still shows the composition root as the only caller. |
+| | | `Origin` is built from the connection's authenticated peer — `front.rs` reads `connection.remote_id()` and passes it straight to `Origin::remote`, so nothing from the request frame reaches the trust decision. This front does not appear in `grep -rn local_front crates/`; the audit rule that grep serves was rewritten in J1 and lives in §3. |
 | ~~G~~ | `kamiroh-adapter-kameo` | ✅ done — `AgentController`, replacing `EchoController` in the binary |
 | ~~I~~ | `kamiroh-adapter-fs` | ✅ done — `Allowlist` from a file, replacing the list the composition root built from an env var |
 | ~~J1~~ | `kamiroh-adapter-herdr` | ✅ done — the pane console: one pane, one agent, local **or remote** |

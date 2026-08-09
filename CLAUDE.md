@@ -61,7 +61,9 @@ do not settle them** — state what would settle each and let him choose.
 
 The advisor is a session-level setting (`/advisor opus`). At an architecture or
 security gate, if it is not on, **say so** rather than self-reviewing and calling
-the gate met. It has never actually been met; that is open decision 3.
+the gate met. It was met once, for the security posture — against the code, not
+the prose, which is the distinction that made it worth anything. Open decision 3
+records what held and the one judgment still outstanding.
 
 ## Where things are
 

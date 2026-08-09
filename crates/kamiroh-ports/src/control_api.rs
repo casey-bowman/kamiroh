@@ -56,16 +56,17 @@ impl Origin {
     /// The peer endpoint, or `None` when this message came from a local front.
     ///
     /// A `Some` answer is precisely the set of messages requiring authorisation.
+    ///
+    /// **This is the only reader.** An `is_local()` companion existed and had no
+    /// callers; it was removed rather than kept, because a convenient predicate
+    /// on the trust type is an invitation for an adapter to branch on trust
+    /// somewhere other than `ControlService`, which §5 names as the one place
+    /// authorisation happens.
     pub fn remote_endpoint(&self) -> Option<EndpointId> {
         match self.0 {
             Provenance::Remote(endpoint) => Some(endpoint),
             Provenance::Local => None,
         }
-    }
-
-    /// Whether this message came from a local front.
-    pub fn is_local(&self) -> bool {
-        self.remote_endpoint().is_none()
     }
 }
 

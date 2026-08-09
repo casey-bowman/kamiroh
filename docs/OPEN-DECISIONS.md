@@ -20,7 +20,7 @@ known nits.
 |---|---|---|---|
 | 1 | Should a malformed allowlist stop the node? | slice I | you |
 | 2 | Does NAT traversal actually work? | M2 | a second machine |
-| 3 | Has anyone but the author read the security posture? | F2 onward | a reviewer |
+| 3 | Has anyone but the author read the security posture? | F2 onward | **read once — one judgment left for you** |
 
 ---
 
@@ -73,31 +73,64 @@ before anyone else is invited to rely on it.
 
 ## 3. Has anyone but the author read the security posture?
 
-**Undecided:** no. Every security argument in this repo was written and checked
-by the same author, and the plan's own advisor gate was never met — recorded
-honestly at F2, G, I and J rather than quietly skipped.
+**Partly answered — the gate was met once, and it did not close the item.** The
+advisor was on for the 2026-08-09 session and reviewed the posture against the
+code rather than the prose. What it found is below. What remains is a judgment
+about disclosure that no reviewer of any kind can make for you.
 
 **Why code cannot settle it.** Several arguments have been converted into
 enforced properties, which is worth a lot but is not the same thing. A mutation
 test proves an argument is *guarded*; it cannot tell you the argument was right.
 
-**In priority order, what wants reading:**
+**What was read, and what held.** Checked in code, not in the documents that
+describe it:
 
-1. **§5a — what `Reach::Anywhere` discloses.** That a node's addresses become
-   publicly resolvable from its endpoint id is demonstrated. Whether that trade
-   is acceptable, and whether opt-in is sufficient mitigation, is a judgment
-   nobody else has made.
-2. **The enumeration argument (F2).** Holds by ordering — authorise before
-   lookup — and is mutation-tested, so a reorder fails three tests. The
-   *reasoning* still deserves a second reader.
-3. **The local-trust boundary (J1).** `Origin::local_front()` is claimed by
-   `LocalLink` on the grounds that a pane is a process owned by whoever owns the
-   node. That is an assumption about the machine, not a property of the code.
+| claim | verdict |
+|---|---|
+| Authorise before dispatch (§5.1) | **holds** — early return, nothing between the guard and `dispatch` |
+| `Origin` opacity (§5.5) | **holds** — a public tuple struct over a private enum; `Provenance::Local` is unreachable outside the crate |
+| The front uses the *authenticated* peer (§3) | **holds** — `connection.remote_id()` straight to `Origin::remote`; nothing from the request frame touches the trust decision |
+| The `local_front` audit rule (§3) | **holds** — `LocalLink`, the composition root, one test |
 
-**What would settle it:** `/advisor opus` on a session, or any competent
-reviewer reading ARCHITECTURE.md §5, §5a and §3.
+**What changed as a result:** §3 now states the local-trust grant as a property
+of stdin rather than of the machine, §5a now answers whether the disclosure can
+be reversed, and `Origin::is_local()` — a callerless predicate on the trust type
+— was removed. Two stale paragraphs in §6 and §7 were corrected.
 
-**Detail:** LOOP.md advisor consultations; ARCHITECTURE.md §5, §5a, §3.
+**What is still yours to decide, and it is one thing:**
+
+**§5a — is the `Anywhere` disclosure acceptable?** Everything factual about it
+is now established. A node publishes a signed record of its addresses under its
+endpoint id; anyone holding that id can resolve it whether or not the allowlist
+would admit them. The reversal question is answered too: publishing is a refresh
+(30s TTL, 5-minute republish in `iroh 1.0.3`), so it stops when the node stops
+and **does not require a new identity** — which would otherwise have invalidated
+every peer's allowlist entry. The residual is n0's relay retention, which is
+their policy and undocumented.
+
+So the remaining question is not "what happens" but "is opt-in enough". That is
+a judgment about your threat model — who might hold an endpoint id, and what it
+costs them to learn where the node lives.
+
+The other two items are downgraded rather than closed:
+
+- **The enumeration argument (F2)** — the *mechanism* is confirmed structural:
+  authorisation returns early, with nothing between the guard and `dispatch`,
+  and it is mutation-tested besides. The *trade* is a weaker claim — that
+  distinct `REFUSED` and `NO_SUCH_ACTOR` codes reaching an already-trusted peer
+  is right, and that `PROTOCOL` for a malformed frame discloses nothing — was
+  read and not disputed, which is not the same as independently argued.
+- **The local-trust boundary (J1)** — the code was not wrong; the *description*
+  was. It now says what the code grants. Whether granting the allowlist bypass
+  to whoever holds this process's stdin is right for a service-managed node is a
+  deployment question, and the honest wording is what makes it askable.
+
+**What would still add something:** a reviewer with no connection to this
+session reading ARCHITECTURE.md §5, §5a and §3. A same-session advisor is a
+second reader, not an independent one.
+
+**Detail:** LOOP.md advisor consultations (2026-08-09); ARCHITECTURE.md §5, §5a,
+§3.
 
 ---
 

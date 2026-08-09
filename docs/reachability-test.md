@@ -21,8 +21,11 @@ a success. This is the one way to get a false pass.
 addresses and publish it to n0's lookup service under their endpoint ids; anyone
 holding an id can then resolve where the node is. That is
 [ARCHITECTURE.md §5a](./ARCHITECTURE.md), and it is the trade this test
-exercises. The keys below are throwaway, so the records are keyed to ephemeral
-ids and expire on their own.
+exercises. The keys below are throwaway, so the records are keyed to ids nothing
+else uses. Publishing is a refresh — `iroh 1.0.3` re-signs every 5 minutes and
+sets a 30-second TTL — so it stops when you stop the nodes, and no lasting
+configuration is needed to undo it. What n0's relay retains after that is its
+policy, not kamiroh's; §5a says so. That is why the ids are throwaway.
 
 **Both machines need the binary.** `cargo build --release -p kamiroh`, or copy
 `target/debug/kamiroh` across. The commands below call it `$KAMIROH`, so set

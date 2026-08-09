@@ -2,9 +2,11 @@
 
 > **Three decisions are open and waiting on a person:**
 > [OPEN-DECISIONS.md](./OPEN-DECISIONS.md) — a malformed allowlist stopping the
-> node, whether NAT traversal actually works, and whether anyone but the author
-> has read the security posture. Raise them at the start of a planning pass; an
-> item leaves that list by being decided, not by going stale.
+> node, whether NAT traversal actually works, and the security posture. The
+> third narrowed: the advisor gate was met once and everything factual about
+> `Reach::Anywhere` is now established, so what is left is one judgment about
+> whether opt-in disclosure is acceptable. Raise them at the start of a planning
+> pass; an item leaves that list by being decided, not by going stale.
 
 ## Current phase
 
@@ -755,7 +757,7 @@ exit path, since a stranded one is a live secret loose in the key directory.
 ```
 cargo fmt --all --check                        # clean
 cargo clippy --workspace --all-targets -- -D warnings   # zero warnings
-cargo test  --workspace                        # 151 passed, 0 failed (as of J2)
+cargo test  --workspace --no-fail-fast         # 188 passed, 0 failed (as of the posture review)
 cargo tree  -p kamiroh-domain -e normal        # no dependencies at all
 cargo tree  -p kamiroh-ports  -e normal        # kamiroh-domain + async-trait + thiserror only
 cargo tree  -i kameo -e normal                 # exactly one consumer: kamiroh-adapter-kameo
@@ -906,6 +908,66 @@ fooled this way.
   down — a bad edit to a config-managed file stops every node that restarts —
   and the alternative (start, admit nobody, complain loudly) is defensible in a
   way the other three alternatives are not.
+
+- **The security posture, finally read by something other than its author.** The
+  advisor was on for this session, so the gate that F2, G, I and J all recorded
+  as unmet was met — against the *code*, not the prose, because this repo has
+  twice shipped a violation of a rule the same commit cited.
+
+  Four claims were checked where they actually live. All held: authorisation
+  returns early before any lookup (`control_service.rs`), `Origin` is a public
+  struct over a private enum so `Local` is unconstructible outside
+  `kamiroh-ports`, the Iroh front passes `connection.remote_id()` straight into
+  `Origin::remote` with nothing from the request frame touching the trust
+  decision, and the `local_front` grep still shows only `LocalLink`, the
+  composition root and one test.
+
+  **Three findings, all about documents disagreeing with code.**
+
+  1. **The local-trust grant is stdin, not the machine.** §3 justified the
+     allowlist bypass with "a pane is a process on this machine, started by
+     whoever owns the node". The code grants it to whoever can write to this
+     process's stdin — the composition root hands `console::serve` a reader over
+     `tokio::io::stdin()` and `LocalLink` stamps `local_front()` on everything
+     arriving there. The same set on a desktop; not the same under a service
+     manager holding a pipe, a shared account, or `kamiroh < file`. Nothing is
+     wrong in the code; the claim was about the wrong thing, and the narrower one
+     is checkable — to know who holds local trust, ask what is on the other end
+     of stdin.
+  2. **Two paragraphs described a node that no longer exists.** §6 said the
+     loopback transport delivers the smoke path via `Origin::remote(local
+     endpoint)` and "the binary self-allows for that reason" — pre-F2 behaviour;
+     `local_smoke` has sent `local_front()` + `Status` since M1 and
+     `build_allowlist` never inserts this node. §7 still claimed the
+     `local_front` grep showed the composition root as its only caller, which J1
+     changed. Both corrected. Worth noting the shape: a *security* document going
+     stale in the direction of claiming a check that is not performed.
+  3. **The disclosure had no documented exit, and the runbook's safety argument
+     was unsupported.** §5a covered what `Anywhere` publishes and never said
+     whether a node can stop. `reachability-test.md` asserted the throwaway
+     records "expire on their own" as the reason publishing during the test is
+     harmless — an assertion nothing in the repo established.
+
+  Settled by reading `iroh 1.0.3` rather than reasoning: `DEFAULT_PKARR_TTL` is
+  30s and `DEFAULT_REPUBLISH_INTERVAL` is 5 minutes. So publishing is a
+  **refresh, not a broadcast** — it stops when the node stops or `KAMIROH_REACH`
+  returns to `direct`, and crucially **the exit needs no new identity**. That was
+  the answer worth having: rotating an endpoint id invalidates every peer's
+  allowlist entry, so a disclosure undoable only that way would have been
+  permanent in practice for a fleet. The residual — what n0's relay retains after
+  a node stops refreshing — is their policy and is now stated as unknown rather
+  than implied to be fine.
+
+  **One removal.** `Origin::is_local()` had zero callers. A convenient predicate
+  on the trust type invites an adapter to branch on trust somewhere other than
+  `ControlService`, which §5 names as the one place authorisation happens. Gone,
+  with the reason recorded on `remote_endpoint`, which is now its only reader.
+
+  **The gate is met once; the item does not close.** A same-session advisor is a
+  second reader, not an independent one, and the question §5a actually asks —
+  whether opt-in is sufficient mitigation — is a judgment about a threat model
+  and is Casey's. OPEN-DECISIONS #3 is rewritten from "nobody has read this" to
+  that single remaining question.
 
 ## Next slice
 
