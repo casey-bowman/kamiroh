@@ -30,6 +30,48 @@ with no agent runtime, and for tests.
 
 ## Done
 
+**M4 — observability**
+
+`tracing` across the app and adapters, a subscriber in the binary, and two rules
+that are specific to what kamiroh is.
+
+**Agent content is never logged — only its shape.** kamiroh is agent-agnostic;
+it has no business knowing what a prompt says, still less writing it down. This
+holds by construction because `Payload`'s `Debug` reports content type and
+length, but that is a domain property and the mistake would be made in
+`kamiroh-app`, so the guard lives there:
+`a_prompts_content_never_reaches_the_log` captures this crate's own output at
+`TRACE` and asserts the secret is absent and a length is present. Mutation-
+tested — swapping `?message` for `%payload.as_text()` fails it.
+
+Demonstrated end to end at maximum verbosity, with a prompt containing a
+distinctive string:
+
+```
+stdout (the console): 1 occurrence     <- where it belongs
+stderr (the log):     0 occurrences
+log said instead:     Prompt(Payload { content_type: "text/plain; …", len: 28 })
+```
+
+**Diagnostics go to stderr, because stdout belongs to the pane console.** Since
+J1 stdout is where an agent's answers appear and where a person is typing; a log
+line there lands in the middle of someone's conversation. Not a detail — it is
+the reason the split exists at all.
+
+Smaller decisions: `Targets` rather than `EnvFilter`, giving per-crate filtering
+(`KAMIROH_LOG=kamiroh_adapter_iroh=debug`) without pulling regex in for dynamic
+matching kamiroh does not use. Dependencies default to `warn` and kamiroh's own
+crates to `info`, since iroh at `debug` would drown the events worth seeing. A
+malformed `KAMIROH_LOG` falls back loudly rather than silently disabling
+logging. `kameo`'s `tracing` feature stays off — dropped in G as an unadopted
+facade, and now that the facade is adopted the reason changes but the answer
+does not: actor-internal spans would be noise.
+
+**One thing found on the way in:** `kamiroh-adapter-iroh` had carried a
+`tracing` dependency since F2 and *was* already emitting three events. So this
+was less a beginning than a completion — the facade was in the tree, used by one
+crate, subscribed to by nobody, which is the worst of the three states.
+
 **The review queue, worked through**
 
 Five items had accumulated since F2, all flagged for an advisor nobody has

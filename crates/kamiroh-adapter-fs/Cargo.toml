@@ -19,6 +19,8 @@ thiserror.workspace = true
 # reported through `KeyStoreError::Backend` as a source rather than a string.
 getrandom = { version = "0.3", features = ["std"] }
 
+tracing.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
 tempfile = "3"

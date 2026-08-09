@@ -178,7 +178,7 @@ async fn run(pane: Pane, agent: String, mut reports: mpsc::Receiver<PaneAgentSta
             Ok(()) => complained = false,
             Err(error) => {
                 if !complained {
-                    eprintln!("kamiroh: not reporting to Herdr: {error}");
+                    tracing::warn!(pane = %pane.id, %error, "not reporting to Herdr");
                     complained = true;
                 }
             }

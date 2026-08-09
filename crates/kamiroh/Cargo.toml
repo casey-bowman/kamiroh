@@ -24,3 +24,7 @@ kamiroh-adapter-iroh.workspace = true
 kamiroh-adapter-kameo.workspace = true
 kamiroh-adapter-herdr.workspace = true
 tokio = { workspace = true, features = ["signal"] }
+tracing.workspace = true
+# `registry` gives per-crate filtering through `Targets`, which needs no regex.
+# `env-filter` would pull one in for dynamic matching kamiroh does not use.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi", "registry"] }

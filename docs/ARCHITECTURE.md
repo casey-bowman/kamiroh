@@ -554,6 +554,36 @@ And there is no way to ask for the *rest* of a long answer, because
 which is a workaround rather than a design. Adding that verb wants a real
 long-running agent to inform it.
 
+## 6f. Logging rules
+
+Enforced by `kamiroh-app` and pinned by `a_prompts_content_never_reaches_the_log`:
+
+- **Agent content is never logged — only its shape.** Log `?message`, never
+  `%payload.as_text()`. `Payload`'s `Debug` reports content type and length,
+  which is why `?message` is safe by construction; the domain pins that with
+  `debug_reports_length_not_content`, and `kamiroh-app` pins the log itself,
+  because that is where the mistake would be made. kamiroh is agent-agnostic:
+  it has no business knowing what a prompt says, still less writing it down.
+- **Diagnostics go to stderr; stdout belongs to the pane console.** Since J1,
+  stdout is where an agent's answers appear and where a person is typing. A log
+  line there lands in the middle of someone's conversation.
+- **A refusal is a `warn`.** Someone kamiroh does not admit tried to drive an
+  agent. Rare on a healthy node, and the first thing worth seeing on an
+  unhealthy one.
+- **Endpoint ids may be logged; secrets never can.** An endpoint id is a public
+  key. `NodeSecret`'s `Debug` is redacted and pinned by
+  `debug_output_never_contains_key_material`.
+- **Dependencies are quiet by default.** `kamiroh_*` at `info`, everything else
+  at `warn`, overridable per crate with `KAMIROH_LOG`. Iroh has plenty to say at
+  `debug`, and a node that floods its own diagnostics is no more observable than
+  one that says nothing.
+
+`Targets` rather than `EnvFilter`: per-crate filtering without pulling regex in
+for dynamic matching kamiroh does not use. `kameo`'s own `tracing` feature stays
+off — it was dropped in G as an unadopted facade, and now that the facade is
+adopted the reason is different but the answer is the same: actor-internal spans
+would be noise next to the events above. Revisit if an actor bug ever needs it.
+
 ## 7. Where the next slices attach
 
 | Slice | Crate | Attaches at |

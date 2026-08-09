@@ -235,6 +235,12 @@ impl Message<Finished> for AgentActor {
 
         let answer = match result {
             Ok(outcome) => {
+                tracing::debug!(
+                    agent = %self.name,
+                    status = ?outcome.status,
+                    output_len = outcome.output.bytes().len(),
+                    "agent run finished"
+                );
                 // The agent is the authority on where it ended up. Assuming
                 // `Idle` is what made a blocked agent indistinguishable from a
                 // finished one.
@@ -242,6 +248,7 @@ impl Message<Finished> for AgentActor {
                 Ok(reply_for(outcome))
             }
             Err(error) => {
+                tracing::warn!(agent = %self.name, %error, "agent run failed");
                 // The runtime failed, so the agent's state is not something we
                 // know — and claiming `Idle` would invite another prompt into
                 // the same failure.

@@ -213,19 +213,18 @@ Note what should **not** be done to make this easier: pre-approving trust from a
 script. The prompt guards an agent's access to a directory, and automating past
 it in a test is one short step from automating past it in the product.
 
-### M4 — Operable and trustworthy
+### M4 — Operable and trustworthy — *observability and the queue done*
 
 *The accumulated debt, which is small and known.*
 
-- **Observability.** There is no tracing at all; the binary uses `println!`.
-  For a process that runs for days and talks to peers, that is the gap that will
-  hurt at 2am. `tracing` was deliberately dropped from the `kameo` dependency —
-  revisit as a workspace-wide decision.
-- **The review queue**, unchanged since it started accumulating in F2:
-  1. the enumeration argument (rests on statement order — breaks quietly)
-  2. malformed-allowlist-is-fatal (can take a fleet down on a bad edit)
-  3. `Agent` as an adapter trait
-  4. the bounded-mailbox reasoning in G
+- ~~**Observability.**~~ ✅ Done. `tracing` across app and adapters, subscriber
+  in the binary, diagnostics on stderr because stdout is the pane console, and a
+  test pinning that agent content never reaches a log. `kameo`'s `tracing`
+  feature was revisited and stays off. See ARCHITECTURE.md §6f.
+- ~~**The review queue**~~ ✅ Worked through: one mutation-tested, one
+  demonstrated, one real bug found and fixed, one struck as resolved by M1. Only
+  malformed-allowlist-is-fatal remains, and it is a human decision rather than
+  an unexamined argument.
 - **Serving-node reporting** — the known J2 gap; the `AgentController` decorator
   after all, using `pane.report_agent`'s `seq` to order two sources.
 - **Allowlist reload trigger** — `reload()` has no caller. A `/reload` console

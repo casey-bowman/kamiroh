@@ -57,6 +57,8 @@ const PEER_ENV: &str = "KAMIROH_PEER";
 const AGENT_TARGET_ENV: &str = "KAMIROH_AGENT_TARGET";
 /// How far this node can be reached from: `direct` (default) or `anywhere`.
 const REACH_ENV: &str = "KAMIROH_REACH";
+/// Per-crate log filter, e.g. `kamiroh_adapter_iroh=debug,kamiroh_app=info`.
+const LOG_ENV: &str = "KAMIROH_LOG";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -77,7 +79,78 @@ async fn main() -> ExitCode {
     }
 }
 
+/// Every kamiroh crate that emits, for per-crate filtering.
+///
+/// Listed rather than prefix-matched: `Targets` matches on `::`-separated path
+/// segments, and `kamiroh_app` does not begin with the segment `kamiroh`.
+const KAMIROH_TARGETS: [&str; 6] = [
+    "kamiroh",
+    "kamiroh_app",
+    "kamiroh_adapter_fs",
+    "kamiroh_adapter_iroh",
+    "kamiroh_adapter_kameo",
+    "kamiroh_adapter_herdr",
+];
+
+/// Sends diagnostics to **stderr**, and says what it will show.
+///
+/// Stderr is not a detail. Since slice J1 stdout belongs to the pane console —
+/// it is where an agent's answers appear and where a person is typing — so a
+/// log line on stdout would land in the middle of someone's conversation.
+///
+/// Dependencies are quiet by default. Iroh in particular has plenty to say at
+/// `debug`, and a node that floods its own diagnostics is no more observable
+/// than one that says nothing.
+fn init_tracing() -> String {
+    use tracing_subscriber::filter::Targets;
+    use tracing_subscriber::prelude::*;
+
+    let requested = std::env::var(LOG_ENV)
+        .ok()
+        .filter(|spec| !spec.trim().is_empty());
+
+    let (filter, summary) = match requested.as_deref() {
+        Some(spec) => match spec.parse::<Targets>() {
+            Ok(targets) => (targets, format!("{spec} (from {LOG_ENV})")),
+            // A bad filter must not silence the node. Falling back loudly beats
+            // starting with logging quietly disabled by a typo.
+            Err(error) => (
+                default_targets(),
+                format!(
+                    "kamiroh=info, dependencies=warn — {LOG_ENV}={spec:?} is not a valid filter ({error})"
+                ),
+            ),
+        },
+        None => (
+            default_targets(),
+            format!("kamiroh=info, dependencies=warn — set {LOG_ENV} to change"),
+        ),
+    };
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_target(true),
+        )
+        .with(filter)
+        .init();
+
+    summary
+}
+
+/// kamiroh's own crates at `info`, everything else at `warn`.
+fn default_targets() -> tracing_subscriber::filter::Targets {
+    use tracing_subscriber::filter::{LevelFilter, Targets};
+
+    KAMIROH_TARGETS.iter().fold(
+        Targets::new().with_default(LevelFilter::WARN),
+        |targets, crate_name| targets.with_target(*crate_name, LevelFilter::INFO),
+    )
+}
+
 async fn run() -> Result<(), Box<dyn Error>> {
+    let logging = init_tracing();
     // --- Driven ports -------------------------------------------------------
     let key_path = match std::env::var_os(KEY_FILE_ENV) {
         Some(path) => PathBuf::from(path),
@@ -116,6 +189,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!("endpoint id: {local_endpoint}");
     println!("listening:   {listening:?}");
     println!("reach:       {}", reach.describe());
+    println!("logging:     {logging} (to stderr)");
     println!("agent:       {agent} — {agent_summary}");
     println!("allowing:    {allow_summary}");
 

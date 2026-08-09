@@ -13,7 +13,11 @@ kamiroh-domain.workspace = true
 kamiroh-ports.workspace = true
 async-trait.workspace = true
 
+tracing.workspace = true
+
 [dev-dependencies]
+# To capture this crate's own log output and assert what is *not* in it.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
 # Test-only: an async test needs an executor. Tests use hand-written fake ports
 # defined in-crate, never an adapter crate, so the dependency rule holds.
 tokio = { workspace = true, features = ["rt", "macros"] }

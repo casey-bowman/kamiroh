@@ -21,6 +21,8 @@ tokio.workspace = true
 #   - `tracing` would add a logging facade the workspace has not adopted yet.
 kameo = { version = "0.17", default-features = false }
 
+tracing.workspace = true
+
 [dev-dependencies]
 # `EchoAgent` moved to the test-double crate when `Agent` became a port.
 kamiroh-adapter-memory.workspace = true

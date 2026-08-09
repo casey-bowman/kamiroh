@@ -20,5 +20,7 @@ kamiroh-adapter-kameo = { path = "crates/kamiroh-adapter-kameo", version = "0.1.
 kamiroh-adapter-herdr = { path = "crates/kamiroh-adapter-herdr", version = "0.1.0" }
 
 async-trait = "0.1"
+# Already in the tree via iroh, so emitting costs one facade and no new crates.
+tracing = "0.1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

@@ -59,6 +59,10 @@ impl FileAllowlist {
     pub fn load(path: impl Into<PathBuf>) -> Result<Self, AllowlistError> {
         let path = path.into();
         let allowed = read(&path)?;
+        // The count, never the entries: an allowlist is public keys, but a log
+        // is a different audience from a config file, and "how many" is what a
+        // startup check actually needs.
+        tracing::info!(path = %path.display(), peers = allowed.len(), "allowlist loaded");
         Ok(Self {
             path,
             allowed: RwLock::new(allowed),

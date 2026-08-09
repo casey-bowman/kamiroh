@@ -100,6 +100,9 @@ impl Transport for IrohTransport {
                 .map_err(|_| TransportError::Timeout {
                     endpoint: to.endpoint,
                 })?
+                .inspect_err(|error| {
+                    tracing::warn!(peer = %to.endpoint, %error, "could not reach peer");
+                })
                 .map_err(|error| TransportError::Unreachable {
                     endpoint: to.endpoint,
                     detail: error.to_string(),

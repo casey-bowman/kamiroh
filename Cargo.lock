@@ -1609,6 +1609,8 @@ dependencies = [
  "kamiroh-domain",
  "kamiroh-ports",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1622,6 +1624,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1635,6 +1638,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1662,6 +1666,7 @@ dependencies = [
  "kamiroh-domain",
  "kamiroh-ports",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -1682,6 +1687,8 @@ dependencies = [
  "kamiroh-domain",
  "kamiroh-ports",
  "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

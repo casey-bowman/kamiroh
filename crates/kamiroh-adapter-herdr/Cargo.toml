@@ -23,6 +23,8 @@ tokio = { workspace = true, features = ["io-util", "io-std", "net"] }
 # something that knows the rules. `serde` is already in the tree via iroh.
 serde_json = "1"
 
+tracing.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util", "net"] }
 tempfile = "3"
