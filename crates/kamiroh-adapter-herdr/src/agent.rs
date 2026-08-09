@@ -5,7 +5,7 @@
 //!
 //! ```text
 //! Agent::run(prompt)
-//!   -> agent.prompt {target, text, wait: {until: [done, blocked], timeout_ms}}
+//!   -> agent.prompt {target, text, wait: {until: [idle, blocked, done], timeout_ms}}
 //!   -> agent.read   {target, source: "recent", lines}
 //!   -> AgentOutcome {output, status}
 //! ```
@@ -150,6 +150,34 @@ impl Agent for HerdrAgent {
             // and the one that does not claim completion.
             PaneAgentState::Unknown => AgentOutcome::still_working(output),
         })
+    }
+
+    async fn status(&self) -> Result<Option<kamiroh_domain::AgentStatus>, AgentError> {
+        // A Herdr agent changes state on its own — a permission dialog on
+        // startup blocks it before kamiroh has sent anything — so this is the
+        // only way `Status` can tell the truth about one.
+        let state = self
+            .client
+            .agent_state(&self.target)
+            .await
+            .map_err(unavailable)?;
+        Ok(agent_status(state))
+    }
+}
+
+/// Turns Herdr's pane state into kamiroh's, where it maps.
+///
+/// `Unknown` becomes `None` rather than a guess: Herdr saying it cannot tell is
+/// not information kamiroh should improve on.
+fn agent_status(state: PaneAgentState) -> Option<kamiroh_domain::AgentStatus> {
+    use kamiroh_domain::AgentStatus;
+    match state {
+        // Herdr distinguishes "at rest" from "finished a task"; kamiroh's
+        // controller does not, and both mean ready for work.
+        PaneAgentState::Idle | PaneAgentState::Done => Some(AgentStatus::Idle),
+        PaneAgentState::Working => Some(AgentStatus::Busy),
+        PaneAgentState::Blocked => Some(AgentStatus::Blocked),
+        PaneAgentState::Unknown => None,
     }
 }
 
@@ -326,6 +354,45 @@ mod tests {
 
         let sent = herdr.requests().await;
         assert_eq!(sent[0]["params"]["wait"]["timeout_ms"], 5000);
+    }
+
+    /// The bug the live run caught: an agent can be blocked before kamiroh has
+    /// sent it anything, and the controller's cached status cannot know.
+    #[tokio::test]
+    async fn status_asks_the_agent_rather_than_assuming() {
+        let herdr = FakeHerdr::scripted(vec![
+            r#"{"id":"1","result":{"agent":{"agent_status":"blocked"}}}"#.to_owned(),
+        ])
+        .await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        assert_eq!(agent.status().await.unwrap(), Some(AgentStatus::Blocked));
+
+        let sent = herdr.requests().await;
+        assert_eq!(sent[0]["method"], "agent.get");
+        assert_eq!(sent[0]["params"]["target"], "w1:p1");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_state_yields_no_opinion_rather_than_a_guess() {
+        let herdr = FakeHerdr::scripted(vec![
+            r#"{"id":"1","result":{"agent":{"agent_status":"unknown"}}}"#.to_owned(),
+        ])
+        .await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        // `None` means "keep what you had", not "idle".
+        assert_eq!(agent.status().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn herdr_done_reads_as_idle_because_kamiroh_has_no_done() {
+        let herdr = FakeHerdr::scripted(vec![
+            r#"{"id":"1","result":{"agent":{"agent_status":"done"}}}"#.to_owned(),
+        ])
+        .await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+        assert_eq!(agent.status().await.unwrap(), Some(AgentStatus::Idle));
     }
 
     /// The front gives a request 30s; waiting longer means the caller is

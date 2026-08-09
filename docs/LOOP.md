@@ -133,9 +133,35 @@ convenience and becomes a question about a node starting agents on someone's
 behalf. `claude-code-setup.md` already treats workspace trust as a one-time
 human step for this repo; this is the same shape.
 
-**It is also `Blocked` in the wild.** A trust dialog is exactly "cannot proceed
-without a human", which kamiroh gained vocabulary for in M1. That raises the
-open question below.
+**It is also `Blocked` in the wild — and answering it remotely works.** A trust
+dialog is exactly "cannot proceed without a human". Driven from a kamiroh
+console against an unapproved directory:
+
+```
+/status   -> blocked          # before kamiroh has sent anything
+1         -> (dialog cleared)
+/status   -> idle
+"Reply with exactly: KAMIROH-UNBLOCKED"  ->  KAMIROH-UNBLOCKED
+```
+
+So the answer to "can a remote operator unblock an agent" is **yes**, and the
+consent still happens — a human sees the question and answers it, from
+somewhere else. That is remote consent, not a bypass, and it is the difference
+between kamiroh telling you an agent is stuck and letting you unstick it.
+
+**Two bugs found getting there, both about telling the truth.**
+
+1. **`Status` returned a cached value.** The controller answered from its own
+   view, which only updates when a run completes, so kamiroh reported `Idle` for
+   an agent sitting at a dialog. `Agent::status` now exists, returning
+   `Option<AgentStatus>` — `None` meaning "no better answer than yours", so
+   agents whose state only moves when run keep the default.
+2. **`impl Agent for Arc<dyn Agent>` forwarded `run` but not `status`.** A
+   defaulted method a forwarding impl does not override is answered by the
+   default — silently, no compile error. Every unit test passed because they
+   called the agent directly; only the live run went through the wrapper the
+   composition root uses. The fix is one method; the guard is a test that
+   asserts the wrapper and the agent agree.
 
 Two smaller operational notes. `agent.start` fails with `agent_pane_busy` until
 the new pane's shell reaches its prompt, so a freshly split pane needs a moment.

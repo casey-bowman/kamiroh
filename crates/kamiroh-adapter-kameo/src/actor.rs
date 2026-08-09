@@ -149,7 +149,30 @@ impl Message<ControlMessage> for AgentActor {
         match message {
             ControlMessage::Prompt(prompt) => self.start(prompt, ctx),
 
-            ControlMessage::Status => ctx.reply(Ok(ControlReply::Status(self.status))),
+            ControlMessage::Status => {
+                // Ask the agent, because this actor's view is only as fresh as
+                // the last run it finished. An agent can block without kamiroh
+                // doing anything — a startup permission dialog is the case
+                // that caught this — and answering `Idle` then is a guess
+                // presented as a fact.
+                //
+                // Awaited inline, which holds the mailbox for one local
+                // round trip. Worth it: the alternative is a delegated reply
+                // and a second state machine for a call that is microseconds.
+                // Skipped entirely while a prompt is in flight, since then
+                // this actor already knows the answer.
+                //
+                // `Ok(None)` and any error both leave the cached value alone:
+                // "no better answer than yours" and "could not ask" are the
+                // same instruction, and a failure to ask is not itself a state.
+                if self.running.is_none() {
+                    let agent = Arc::clone(&self.agent);
+                    if let Ok(Some(status)) = agent.status().await {
+                        self.status = status;
+                    }
+                }
+                ctx.reply(Ok(ControlReply::Status(self.status)))
+            }
 
             ControlMessage::Interrupt => {
                 self.abandon("the prompt was interrupted");

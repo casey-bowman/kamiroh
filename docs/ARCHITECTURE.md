@@ -484,6 +484,16 @@ Enforced by `kamiroh-adapter-herdr`'s `HerdrAgent` and pinned by its tests:
 - **Nothing on the startup path may prompt the agent.** `local_smoke` sends
   `Status`, not `Prompt`: with a real agent behind the port, a startup smoke
   that prompts spends money and puts words in the agent's mouth.
+- **`Status` asks the agent; it does not report a cached value.** An agent can
+  change state with kamiroh doing nothing — a permission dialog on startup
+  blocks one before it has ever been prompted. `Agent::status` returns
+  `Option<AgentStatus>`, where `None` means "no better answer than yours", so an
+  agent whose state only moves when it runs keeps the default and costs nothing.
+- **`impl Agent for Arc<dyn Agent>` must forward every method.** A defaulted
+  method it does not override is answered by the *default*, silently and with no
+  compile error. `status` was added with a default and this impl kept it for one
+  commit; the symptom was kamiroh reporting `Idle` for an agent stopped at a
+  dialog, with all unit tests green because they bypassed the wrapper.
 - **A non-text prompt is refused, not typed at a terminal.** A pane takes
   keystrokes; sending arbitrary bytes and calling the result an answer is worse
   than saying no.

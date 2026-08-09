@@ -181,14 +181,12 @@ running. Prefer attach-only first: starting things is where lifecycle bugs live.
 unknown, and a per-kind difference there is a silent wrong answer rather than a
 loud failure.
 
-**And an open capability question: can a remote operator unblock an agent?**
-M1 proved kamiroh can *report* `Blocked` — the live run's workspace-trust dialog
-is exactly that case. What is untested is whether a prompt sent through kamiroh
-can *answer* one: a trust dialog is a TUI choice, not a text field, so
-`agent.prompt` may or may not clear it. This is the difference between "kamiroh
-tells you your agent is stuck at a cafe" and "kamiroh lets you unstick it", and
-the second is most of the value. Testing it needs a scratch directory nobody has
-approved yet, and a human willing to *not* click.
+**Answered: a remote operator *can* unblock an agent.** Tested against a
+workspace-trust dialog in an unapproved directory — `/status` reported
+`blocked`, sending `1` cleared the dialog, and the agent then did real work. The
+consent still happens; it travels. That is the difference between kamiroh
+telling you an agent is stuck and letting you unstick it, and it is most of the
+value.
 
 Note what should **not** be done to make this easier: pre-approving trust from a
 script. The prompt guards an agent's access to a directory, and automating past

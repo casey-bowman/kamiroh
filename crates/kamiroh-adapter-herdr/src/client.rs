@@ -139,6 +139,21 @@ impl Client {
         }
     }
 
+    /// Asks what a Herdr-managed agent is doing right now.
+    pub async fn agent_state(&self, target: &str) -> Result<PaneAgentState, ClientError> {
+        let result = self
+            .request("agent.get", serde_json::json!({ "target": target }))
+            .await?;
+
+        Ok(PaneAgentState::from_wire(
+            result
+                .get("agent")
+                .and_then(|agent| agent.get("agent_status"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("unknown"),
+        ))
+    }
+
     /// Reads the last `lines` of what a Herdr-managed agent has produced.
     pub async fn read_agent(&self, target: &str, lines: u32) -> Result<String, ClientError> {
         let result = self

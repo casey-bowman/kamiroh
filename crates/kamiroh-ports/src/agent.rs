@@ -51,6 +51,22 @@ pub trait Agent: Send + Sync + 'static {
     /// [`AgentOutcome`]: the alternative is an infrastructure failure arriving
     /// at the caller looking like something the agent said.
     async fn run(&self, prompt: Payload) -> Result<AgentOutcome, AgentError>;
+
+    /// What the agent is doing right now, if it can say.
+    ///
+    /// A controller's own view of an agent is only as fresh as the last run it
+    /// finished, and **an agent can change state without kamiroh doing
+    /// anything**. A coding agent that raises a permission dialog on startup is
+    /// blocked before it has been prompted even once; without this, `Status`
+    /// answers `Idle` and invites someone to wait for work that will never
+    /// start.
+    ///
+    /// `Ok(None)` means "no better answer than yours" — the caller should keep
+    /// what it had. That is the default, and it is right for any agent whose
+    /// state only changes when it is run.
+    async fn status(&self) -> Result<Option<AgentStatus>, AgentError> {
+        Ok(None)
+    }
 }
 
 /// Why a run produced no outcome at all.
@@ -80,10 +96,20 @@ pub enum AgentError {
 /// Choosing between an agent runtime and a stand-in is a decision made from
 /// configuration, which means the two arms have different concrete types and
 /// have to meet as `Arc<dyn Agent>` before anything else can take them.
+/// **Every method must be forwarded here.** A defaulted trait method that this
+/// impl does not override is silently answered by the *default* rather than by
+/// the wrapped agent — which is not a compile error, and not visible until
+/// something behaves as though the agent had no opinion. `status` was added
+/// with a default and this impl kept it for one commit; the symptom was
+/// kamiroh reporting `Idle` for an agent sitting at a permission dialog.
 #[async_trait]
 impl Agent for std::sync::Arc<dyn Agent> {
     async fn run(&self, prompt: Payload) -> Result<AgentOutcome, AgentError> {
         (**self).run(prompt).await
+    }
+
+    async fn status(&self) -> Result<Option<AgentStatus>, AgentError> {
+        (**self).status().await
     }
 }
 
@@ -128,5 +154,66 @@ impl AgentOutcome {
     /// Whether this run left the agent with nothing outstanding.
     pub fn is_finished(&self) -> bool {
         self.status == AgentStatus::Idle
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use super::*;
+
+    /// An agent with an opinion about its own state.
+    struct Opinionated;
+
+    #[async_trait]
+    impl Agent for Opinionated {
+        async fn run(&self, prompt: Payload) -> Result<AgentOutcome, AgentError> {
+            Ok(AgentOutcome::blocked(prompt))
+        }
+
+        async fn status(&self) -> Result<Option<AgentStatus>, AgentError> {
+            Ok(Some(AgentStatus::Blocked))
+        }
+    }
+
+    /// The `Arc<dyn Agent>` forwarding impl must forward **every** method.
+    ///
+    /// A defaulted method it fails to override is answered by the default, not
+    /// by the agent — silently, and with no compile error. That is how kamiroh
+    /// came to report `Idle` for an agent stopped at a permission dialog.
+    #[tokio::test]
+    async fn the_arc_impl_forwards_status_and_not_the_default() {
+        let direct = Opinionated;
+        let boxed: Arc<dyn Agent> = Arc::new(Opinionated);
+
+        assert_eq!(direct.status().await.unwrap(), Some(AgentStatus::Blocked));
+        assert_eq!(
+            boxed.status().await.unwrap(),
+            Some(AgentStatus::Blocked),
+            "Arc<dyn Agent> answered from the default instead of the agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_arc_impl_forwards_run() {
+        let boxed: Arc<dyn Agent> = Arc::new(Opinionated);
+        let outcome = boxed.run(Payload::text("x")).await.unwrap();
+        assert_eq!(outcome.status, AgentStatus::Blocked);
+    }
+
+    /// An agent whose state only changes when it runs keeps the default.
+    #[tokio::test]
+    async fn the_default_status_defers_to_the_caller() {
+        struct Quiet;
+
+        #[async_trait]
+        impl Agent for Quiet {
+            async fn run(&self, prompt: Payload) -> Result<AgentOutcome, AgentError> {
+                Ok(AgentOutcome::finished(prompt))
+            }
+        }
+
+        assert_eq!(Quiet.status().await.unwrap(), None);
     }
 }
