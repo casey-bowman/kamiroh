@@ -25,7 +25,13 @@ exercises. The keys below are throwaway, so the records are keyed to ephemeral
 ids and expire on their own.
 
 **Both machines need the binary.** `cargo build --release -p kamiroh`, or copy
-`target/debug/kamiroh` across.
+`target/debug/kamiroh` across. The commands below call it `$KAMIROH`, so set
+that once on each machine and the rest can be pasted as-is:
+
+```bash
+export KAMIROH=./kamiroh                 # a copied binary
+export KAMIROH=~/src/kamiroh/target/release/kamiroh   # or a built one
+```
 
 The agents are `echo` throughout. This test is about the network; using a real
 coding agent would spend tokens to prove nothing extra.
@@ -39,13 +45,26 @@ On **each** machine, in its own directory:
 ```bash
 mkdir -p ~/kamiroh-test && cd ~/kamiroh-test
 KAMIROH_KEY_FILE=./node.key KAMIROH_ALLOW_FILE=./allow \
-  kamiroh < /dev/null 2>/dev/null | grep '^endpoint id:'
+  "$KAMIROH" < /dev/null 2>/dev/null | grep '^endpoint id:'
 ```
 
 It prints an id and keeps running; Ctrl-C once you have it. The key is written
 to `./node.key`, so the same id comes back on every later run.
 
-Write both down. Call them `HOME_ID` and `AWAY_ID`.
+Now give **each machine the other one's id** — this is the only thing that has
+to travel between them, and it is the step that is easy to do backwards:
+
+```bash
+# on the HOME machine, holding the away machine's id
+export AWAY_ID=<the id printed on the away machine>
+
+# on the AWAY machine, holding the home machine's id
+export HOME_ID=<the id printed on the home machine>
+```
+
+Ids are public keys, so sending them over any channel you like is fine — that is
+what makes them safe to paste. What they are *not* is a secret that admits
+anyone: the allowlist still decides.
 
 ---
 
@@ -58,7 +77,7 @@ echo "$AWAY_ID" > ./allow          # only the away node may drive this one
 KAMIROH_KEY_FILE=./node.key \
 KAMIROH_ALLOW_FILE=./allow \
 KAMIROH_REACH=anywhere \
-  kamiroh
+  "$KAMIROH"
 ```
 
 Leave it running. You should see:
@@ -81,7 +100,7 @@ KAMIROH_KEY_FILE=./node.key \
 KAMIROH_ALLOW_FILE=./allow \
 KAMIROH_REACH=anywhere \
 KAMIROH_PEER="$HOME_ID" \
-  kamiroh
+  "$KAMIROH"
 ```
 
 Then type at the prompt:
