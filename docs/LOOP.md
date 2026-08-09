@@ -335,6 +335,12 @@ cache, so slice G needed no network at all.
   `git log --oneline -- docs/LOOP.md` is the mapping.
 - `KAMIROH_KEY_FILE` overrides the key path. Use it when running the binary
   inside a sandbox, or to run several nodes on one machine.
+- **The advisor is Opus, and it is a session-level setting** — `/advisor opus`,
+  or `claude --advisor opus` at launch. The docs used to say Fable throughout;
+  Fable is not currently selectable as an advisor, and they now say "advisor".
+  If it is off at a gate, say so rather than self-reviewing and calling the gate
+  met: what the gate buys is a reviewer that is not anchored on the reasoning it
+  is meant to attack, which a same-session pass cannot be.
 - **Update this file in the same commit as the slice it describes.** F2 shipped
   without its entry and the gap was only noticed a slice later, at which point
   the details had to be recovered from the diff. The plan's step 7 is "write

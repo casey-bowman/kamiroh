@@ -43,8 +43,11 @@ Use those absolute paths under `sandbox.filesystem.allowWrite` if sandboxed `git
 
 ```bash
 cd /path/to/kamiroh
-claude --advisor fable
+claude --advisor opus
 ```
+
+Fable is **not** currently selectable as an advisor; Opus is. `/advisor opus`
+switches an already-running session. See the build plan's preconditions table.
 
 Accept **workspace trust** for this repository only. Prefer starting Claude at the git root, not an unrelated parent directory.
 
@@ -81,11 +84,11 @@ If git cannot write under sandbox, fix `allowWrite` paths in `.claude/settings.l
 After ports are stable, you may run workers as separate sessions:
 
 ```bash
-claude -w iroh-adapter          # worker; Fable usually off
-claude --advisor fable          # main conductor
+claude -w iroh-adapter          # worker; advisor usually off
+claude --advisor opus           # main conductor
 ```
 
-Sessions do not share chat or advisor context. Coordinate via `docs/LOOP.md` and merges. Prefer Fable on the main/architecture session only.
+Sessions do not share chat or advisor context. Coordinate via `docs/LOOP.md` and merges. Prefer the advisor on the main/architecture session only.
 
 ## Product note
 

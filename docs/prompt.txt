@@ -17,10 +17,12 @@ Architecture constraints (non-negotiable):
 
 Working method:
 - Default: one session on main checkout; one slice at a time
-- Executor implements and verifies; consult Fable ONLY at architecture boundaries,
+- Executor implements and verifies; consult the advisor ONLY at architecture boundaries,
   public port traits, security-sensitive paths (allowlist, keys), and before declaring a phase done
+- The advisor is a session-level setting (/advisor opus). If it is not on, say so at the
+  gate rather than self-reviewing and calling the gate met
 - After every slice: cargo check -p <touched> (and cargo test when tests exist)
-- Update docs/LOOP.md with: done / next / blockers after each slice
+- Update docs/LOOP.md in the SAME commit as the slice it describes: done / next / blockers
 - Stubs for Herdr/Iroh are OK if ports are real
 
 First deliverable:
