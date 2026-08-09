@@ -1,0 +1,20 @@
+[package]
+name = "kamiroh-adapter-iroh"
+description = "Iroh adapter for kamiroh: endpoint identity, and later peer transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kamiroh-domain.workspace = true
+# `iroh-base` rather than `iroh`: identity derivation needs the key types, not
+# the QUIC stack, and that is ~155 crates in the tree instead of ~375. Deriving
+# with `ed25519-dalek` directly would be lighter still, but this way the public
+# key is produced by the very type iroh uses, so agreement is by construction
+# rather than by our reading of the spec. Slice F2 adds `iroh` proper.
+#
+# `key` transitively enables `relay` and `url` inside iroh-base; that is the
+# crate's own wiring, not something this dependency can narrow further.
+iroh-base = { version = "1.0", default-features = false, features = ["key"] }

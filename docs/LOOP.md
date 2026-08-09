@@ -2,11 +2,36 @@
 
 ## Current phase
 
-Foundation. Slices **A** (workspace + ARCHITECTURE.md), **B** (port traits) and
-**E** (filesystem key custody) are complete. A node now has a real, persistent
-identity; transport, allowlist and controller are still in-memory.
+Foundation. Slices **A** (workspace + ARCHITECTURE.md), **B** (port traits),
+**E** (filesystem key custody) and **F1** (real endpoint identity) are complete.
+A node's identity is now genuine and stable across restarts; transport,
+allowlist and controller are still in-memory.
 
 ## Done
+
+**Slice F1 — real endpoint identity**
+
+F was split. F1 is identity derivation, fully offline-testable and independently
+revertible; F2 is the transport, which needs a wire format, an accept-loop
+lifecycle, and UDP sockets the sandbox denies. Bundling them would have made the
+small high-value piece wait on the large one.
+
+- New crate `kamiroh-adapter-iroh` with one function, `endpoint_id_for`:
+  `SecretKey::from_bytes(secret).public()` → `kamiroh_domain::EndpointId`.
+  Infallible — any 32 bytes are a valid ed25519 secret scalar.
+- Depends on `iroh-base` (`default-features = false`, `features = ["key"]`), not
+  `iroh`: ~155 crates instead of ~375. Going through the type Iroh itself uses
+  makes agreement structural, and one test asserts it directly.
+- **`placeholder_endpoint_for` deleted**, not merely orphaned. `cargo check
+  --workspace` proves the removal is complete.
+- Composition root now prints a real id. It changed from `e0c520ae…` (the old
+  byte inversion) to `b4cfcb25…` from the *same* persisted secret — expected,
+  and the visible proof the derivation is no longer fake.
+
+Boundary verified: `iroh-base` has exactly one consumer (`cargo tree -i
+iroh-base`), `kamiroh-domain` still has zero dependencies, and `kamiroh-app`'s
+tree contains no iroh crate. Beware `grep -i iroh` here — it matches "kam*iroh*";
+check the reverse-dependency tree instead.
 
 **Slice E — `kamiroh-adapter-fs` key custody** (`5eb40b5`)
 
@@ -66,7 +91,7 @@ exit path, since a stranded one is a live secret loose in the key directory.
 ```
 cargo fmt --all -- --check              # clean
 cargo clippy --workspace --all-targets  # zero warnings
-cargo test  --workspace                 # 60 passed, 0 failed
+cargo test  --workspace                 # 63 passed, 0 failed
 cargo run   -p kamiroh                  # same endpoint id on a second run; unlisted peer refused
 cargo tree  -p kamiroh-domain -e normal # no dependencies at all
 cargo tree  -p kamiroh-ports  -e normal # kamiroh-domain + async-trait + thiserror only
@@ -90,6 +115,8 @@ for i in $(seq 1 30); do cargo test -p kamiroh-adapter-fs || echo "FAIL $i"; don
 | Key publish | temp + `hard_link` | The only option that is both non-clobbering and atomically published; `rename` clobbers, `O_EXCL`-in-place exposes an empty file. |
 | Key format | Hex + newline | Inspectable, never mistaken for corrupt binary, reads like an `EndpointId`. |
 | Key entropy | `getrandom` only | A node secret is generated once; a seeded PRNG layer would add surface for nothing. |
+| Split F | F1 identity, F2 transport | F1 is offline-testable and independently revertible; bundling made it wait on the large, socket-dependent half. |
+| Identity dep | `iroh-base` `["key"]`, not `iroh` | ~155 crates instead of ~375, and the public key comes from the type Iroh uses, so agreement is structural. |
 
 ## Advisor consultations
 
@@ -121,33 +148,41 @@ for i in $(seq 1 30); do cargo test -p kamiroh-adapter-fs || echo "FAIL $i"; don
   that framing weighed clobbering against non-clobbering and missed the
   atomic-publish axis. Reconciled, then switched. Worth remembering as a pattern
   — a reproduced failure outranks a design preference.
+- **Before slice F** — split F into F1/F2, use `iroh-base` rather than `iroh` for
+  identity, and check the derivation is not the old inversion. All adopted.
 
 ## Next slice
 
-**F — `kamiroh-adapter-iroh`.** It is the last piece holding a placeholder:
-`placeholder_endpoint_for()` inverts the secret's bytes, where the real endpoint
-id is the ed25519 public key derived from it. F also brings the first genuine
-front — an inbound path calling `ControlApi` with an *authenticated* peer.
+**F2 — the Iroh transport.** Adds `iroh` proper to `kamiroh-adapter-iroh`: an
+`IrohTransport` implementing the `Transport` port, plus the first genuine front —
+an inbound path calling `ControlApi` with an authenticated peer.
 
-Done when a node reports its real Iroh endpoint id, derived from the secret slice
-E persists, and an inbound message from an allowlisted peer reaches an agent.
+Done when an inbound message from an allowlisted peer reaches an agent on
+another node, and an unlisted peer is refused.
 
-Four things to settle in F:
+**The first decision, because it determines whether the domain stays
+dependency-free:** the wire format. `postcard` + `serde` derives on the domain
+types would give `kamiroh-domain` a serde dependency, giving up the zero-dep
+property held since slice A. The alternative is a codec inside the adapter that
+maps domain types to bytes by hand. Settle this before writing anything else.
 
+Also settled in advance:
+
+- `Origin` must be built from `connection.remote_id()` — the peer Iroh
+  authenticated — never from message content. F2 must not call
+  `Origin::local_front()`; `grep -r local_front` should still show no adapters.
 - The wire reply to an unauthorised peer must not distinguish "refused" from
-  "no such actor" (ARCHITECTURE.md §7). `TransportError` separates them for the
-  local caller, which is right; serialising that difference back to a rejected
-  peer hands it an enumeration oracle.
-- Iroh's node id converts to `EndpointId` at the adapter boundary. If the domain
-  needs to learn an Iroh type for this, the conversion is in the wrong place.
-- **Delete `placeholder_endpoint_for`**, don't merely stop calling it. A unused
-  fake key-derivation left in a test-double crate is the same hazard as the old
-  `Origin::Local` variant: available to be called by mistake.
-- The inbound path must build its `Origin` from the endpoint Iroh
-  **authenticated**, never one read out of message content, and must never call
-  `Origin::local_front()`. `grep -r local_front` should still show no adapters.
+  "no such actor" (ARCHITECTURE.md §7). Concretely: `ControlApiError::NotAllowed`
+  and `ControllerError::NoSuchActor` must serialise identically for a peer that
+  failed the allowlist. The local `TransportError` distinction stays.
+- Read `iroh::protocol`'s `ProtocolHandler`/`Router` before hand-rolling an
+  accept loop — it looked like the idiomatic path.
+- Before concluding F2 needs a run outside the sandbox: `RelayMode::Disabled`
+  with the `N0DisableRelay` preset is the direct-only path, and
+  `iroh::test_utils::TestTransport` implements `Preset`, which may allow a
+  two-node test with no sockets at all.
 
-Consult the advisor before F lands: it is both an architecture boundary and a
+Consult the advisor before F2 lands: it is both an architecture boundary and a
 security-sensitive path.
 
 ## Known nits (not worth their own commit)

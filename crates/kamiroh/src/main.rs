@@ -14,9 +14,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kamiroh_adapter_fs::FileKeyStore;
-use kamiroh_adapter_memory::{
-    EchoController, InMemoryAllowlist, LoopbackTransport, placeholder_endpoint_for,
-};
+use kamiroh_adapter_iroh::endpoint_id_for;
+use kamiroh_adapter_memory::{EchoController, InMemoryAllowlist, LoopbackTransport};
 use kamiroh_app::ControlService;
 use kamiroh_domain::{ActorName, ControlMessage, ControlReply, EndpointId, PeerAddress};
 use kamiroh_ports::{
@@ -43,9 +42,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let secret = key_store.load_or_create().await?;
     println!("key file:    {}", key_path.display());
 
-    // Still a placeholder: the real endpoint id is the ed25519 public key for
-    // this secret, which arrives with the Iroh adapter in slice F.
-    let local_endpoint = placeholder_endpoint_for(&secret);
+    // The real ed25519 public key for this secret — the id a peer will see.
+    let local_endpoint = endpoint_id_for(&secret);
 
     // Self-allow, so the loopback smoke path below is authorised. A real node's
     // allowlist is built from configured peers and does not contain itself.

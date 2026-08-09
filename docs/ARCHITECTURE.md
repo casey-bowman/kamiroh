@@ -59,7 +59,15 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-app` | Use cases against ports | domain, ports, `async-trait` |
 | `kamiroh-adapter-memory` | In-memory implementation of every driven port | domain, ports, `async-trait` |
 | `kamiroh-adapter-fs` | Node key custody on disk | domain, ports, `async-trait`, `getrandom` |
+| `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport (F2) | domain, `iroh-base` |
 | `kamiroh` | Composition root (binary) | all of the above, `tokio` |
+
+`kamiroh-adapter-iroh` depends on `iroh-base` with `default-features = false,
+features = ["key"]` rather than on `iroh`: identity derivation needs the key
+types, not the QUIC stack, which is ~155 crates in the tree instead of ~375.
+Deriving with `ed25519-dalek` directly would be lighter still, but going through
+the type Iroh itself uses makes agreement structural rather than a matter of our
+reading the spec. F2 adds `iroh` proper.
 
 ### Deferred crates — a stated decision, not an omission
 
@@ -192,28 +200,37 @@ works) and `crates/kamiroh-adapter-memory/src/allowlist.rs`.
 
 ## 6. What the binary does today
 
-`cargo run -p kamiroh` wires every port to an in-memory adapter, then:
+`cargo run -p kamiroh` resolves each port and runs a smoke path:
 
 ```text
-endpoint id: fffefdfc…e1e0
+key file:    ~/.config/kamiroh/node.key
+endpoint id: <64 hex chars — this node's ed25519 public key>
 agent:       agent
 prompt -> "hello"
 unlisted peer eeee…eeee -> refused
 ```
 
-The loopback transport delivers as `Origin::Remote(local endpoint)`, so the
+The loopback transport delivers via `Origin::remote(local endpoint)`, so the
 smoke path exercises the real allowlist rather than bypassing it. The binary
 self-allows for that reason; a real node's allowlist is built from configured
 peers and does not contain itself.
 
-Key custody is real as of slice E: the secret comes from OS entropy and lives in
-`$XDG_CONFIG_HOME/kamiroh/node.key` (or `$HOME/.config/...`), overridable with
-`KAMIROH_KEY_FILE`. The endpoint id is therefore stable across restarts.
+**Real as of slice E:** key custody. The secret comes from OS entropy and lives
+in `$XDG_CONFIG_HOME/kamiroh/node.key` (or `$HOME/.config/...`), overridable
+with `KAMIROH_KEY_FILE`.
 
-**One placeholder remains, loud in the code:** `placeholder_endpoint_for()`
-inverts the secret's bytes. It is **not** a key derivation; the real endpoint id
-is the ed25519 public key, which the Iroh adapter supplies in slice F.
-`InMemoryKeyStore` still exists as a test double but no longer backs the binary.
+**Real as of slice F1:** the endpoint id. It is the ed25519 public key derived
+from that secret by `kamiroh_adapter_iroh::endpoint_id_for` — the same id a peer
+will see, since it comes from the very key type Iroh uses. Together these mean a
+node's identity is genuine and stable across restarts.
+
+`placeholder_endpoint_for`, which faked an id by inverting the secret's bytes,
+was **deleted** in F1 rather than left unused: a fake key derivation sitting in a
+test-double crate is available to be called by mistake. `InMemoryKeyStore` still
+exists as a test double but no longer backs the binary.
+
+**Still in-memory:** transport, allowlist, and controller. The Iroh transport is
+F2; the allowlist gains a real config source in I; the Kameo controller is G.
 
 ## 6a. Key custody rules
 
@@ -245,8 +262,10 @@ Enforced by `kamiroh-adapter-fs` and pinned by its tests:
 | Slice | Crate | Attaches at |
 |---|---|---|
 | ~~E~~ | `kamiroh-adapter-fs` | ✅ done — `KeyStore`, replacing `InMemoryKeyStore` in the binary |
-| F | `kamiroh-adapter-iroh` | `Transport` + a front calling `ControlApi`; supplies the real `EndpointId` |
+| ~~F1~~ | `kamiroh-adapter-iroh` | ✅ done — real `EndpointId` derivation; `placeholder_endpoint_for` deleted |
+| F2 | `kamiroh-adapter-iroh` | `Transport` + a front calling `ControlApi` with an authenticated peer |
 | | | ⚠ The reply sent **over the wire** to an unauthorised peer must not distinguish "refused" from "no such actor". `TransportError` separates them for the local caller, which is right; serialising that distinction back to a rejected peer would hand it the enumeration oracle §5.4 promises not to give. |
+| | | ⚠ `Origin` must be built from `connection.remote_id()` — the peer Iroh authenticated — never from message content. F2 must not call `Origin::local_front()`. |
 | G | `kamiroh-adapter-kameo` | `AgentController` — replaces `EchoController` |
 | I | allowlist config source | `Allowlist` — replaces the in-memory list |
 | J | `kamiroh-adapter-herdr` | A second front calling the same `ControlApi` |
