@@ -14,7 +14,9 @@ pub mod control;
 pub mod endpoint;
 pub mod secret;
 
+pub(crate) mod hex;
+
 pub use actor::{ActorName, InvalidActorName, PeerAddress};
 pub use control::{AgentStatus, ControlMessage, ControlReply, Payload};
 pub use endpoint::{EndpointId, ParseEndpointIdError};
-pub use secret::NodeSecret;
+pub use secret::{NodeSecret, ParseNodeSecretError};

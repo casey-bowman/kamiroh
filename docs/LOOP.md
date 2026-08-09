@@ -2,11 +2,37 @@
 
 ## Current phase
 
-Foundation. Slices **A** (workspace + ARCHITECTURE.md) and **B** (port traits)
-are complete, together with an in-memory adapter set and a working composition
-root — the whole of the master prompt's first deliverable.
+Foundation. Slices **A** (workspace + ARCHITECTURE.md), **B** (port traits) and
+**E** (filesystem key custody) are complete. A node now has a real, persistent
+identity; transport, allowlist and controller are still in-memory.
 
 ## Done
+
+**Slice E — `kamiroh-adapter-fs` key custody** (commit pending)
+
+- `FileKeyStore`: OS entropy via `getrandom`, stored as hex at
+  `$XDG_CONFIG_HOME/kamiroh/node.key`, overridable with `KAMIROH_KEY_FILE`.
+- Publish via temp file + `hard_link` — see the race below.
+- Permission checks before any read, on both the file (`0600`) and its parent
+  directory (not group/other writable), on the create *and* load paths.
+- Domain gained `NodeSecret::{from_fill, from_hex, write_hex_into}` and
+  `ParseNodeSecretError`, plus a private `hex` module shared with `EndpointId`.
+  The `KeyStore` port and `kamiroh-app` were **not** touched — the port held.
+- Composition root swapped `InMemoryKeyStore` → `FileKeyStore`; that swap was a
+  one-line constructor change, which is the evidence the boundary is right.
+
+**A real race, found and closed.** The first implementation created the key with
+`O_CREAT | O_EXCL` at its final path, then wrote. That is non-clobbering but not
+atomically published: the name exists before the contents do, so a concurrently
+starting process reads a **zero-length** file and reports a spurious `Malformed`.
+Reproduced as `got 0` — 4 failures in 5 full-suite runs. Replaced with temp file
+→ fsync → `hard_link`, which is non-clobbering *and* publishes atomically.
+Verified with the same loop harness that caught it: **30/30 clean**.
+
+Two follow-on details from that fix: temp paths need a per-attempt counter as
+well as the pid, or threads in one process stage onto a single path and delete
+each other's candidate; and the temp file is removed by a scope guard on every
+exit path, since a stranded one is a live secret loose in the key directory.
 
 **Slice A — workspace + crate graph + ARCHITECTURE.md**
 
@@ -40,10 +66,13 @@ root — the whole of the master prompt's first deliverable.
 ```
 cargo fmt --all -- --check              # clean
 cargo clippy --workspace --all-targets  # zero warnings
-cargo test  --workspace                 # 37 passed, 0 failed
-cargo run   -p kamiroh                  # prints endpoint id; prompt echoes; unlisted peer refused
+cargo test  --workspace                 # 60 passed, 0 failed
+cargo run   -p kamiroh                  # same endpoint id on a second run; unlisted peer refused
 cargo tree  -p kamiroh-domain -e normal # no dependencies at all
 cargo tree  -p kamiroh-ports  -e normal # kamiroh-domain + async-trait + thiserror only
+
+# The concurrency race is timing-dependent — one green run proves nothing.
+for i in $(seq 1 30); do cargo test -p kamiroh-adapter-fs || echo "FAIL $i"; done
 ```
 
 ## Decisions
@@ -58,6 +87,9 @@ cargo tree  -p kamiroh-ports  -e normal # kamiroh-domain + async-trait + thiserr
 | Allowlist | Sync `bool`, no enumeration, deny-by-default | An allowlist check is set membership; a fallible one invites treating an error as "allow". |
 | `Origin` | Opaque, built via `remote()` / `local_front()` | A public `Local` variant is constructible by every adapter; local trust must be a deliberate, greppable act. |
 | Lints | `deny(missing_docs)`, `forbid(unsafe_code)` | The docs promised a warning-free build; the lint level now enforces it. |
+| Key publish | temp + `hard_link` | The only option that is both non-clobbering and atomically published; `rename` clobbers, `O_EXCL`-in-place exposes an empty file. |
+| Key format | Hex + newline | Inspectable, never mistaken for corrupt binary, reads like an `EndpointId`. |
+| Key entropy | `getrandom` only | A node secret is generated once; a seeded PRNG layer would add surface for nothing. |
 
 ## Advisor consultations
 
@@ -79,26 +111,43 @@ cargo tree  -p kamiroh-ports  -e normal # kamiroh-domain + async-trait + thiserr
      not yet owe; §7's slice-F row now records that obligation explicitly.
   4. `missing_docs` promoted from `warn` to `deny`, so the doc's promise of a
      warning-free build is enforced rather than aspirational.
+- **Before slice E** — endorsed the design (hex storage, permission check before
+  read, `0o022` mask on the parent directory rather than requiring `0o700`,
+  wiped intermediate buffers, `NodeSecret::from_fill` so no plaintext copy
+  exists outside the type) and set the scope boundary: E is custody only, the
+  ed25519 endpoint id belongs to F.
+- **On the race, mid-slice** — the pre-slice advice had been to prefer `O_EXCL`
+  on the final path and *not* to use `hard_link`. The reproduction overrode it:
+  that framing weighed clobbering against non-clobbering and missed the
+  atomic-publish axis. Reconciled, then switched. Worth remembering as a pattern
+  — a reproduced failure outranks a design preference.
 
 ## Next slice
 
-**C — `kamiroh-domain` deepening**, or skip straight to **E** (`adapter-fs`
-`KeyStore`).
+**F — `kamiroh-adapter-iroh`.** It is the last piece holding a placeholder:
+`placeholder_endpoint_for()` inverts the secret's bytes, where the real endpoint
+id is the ed25519 public key derived from it. F also brings the first genuine
+front — an inbound path calling `ControlApi` with an *authenticated* peer.
 
-Slice C as scoped in the build plan is largely already done: the domain exists
-with 15 passing unit tests. The higher-value next step is **E**, which replaces
-the two loud placeholders:
+Done when a node reports its real Iroh endpoint id, derived from the secret slice
+E persists, and an inbound message from an allowlisted peer reaches an agent.
 
-- `InMemoryKeyStore::insecure_dev()` — a fixed, publicly known secret
-- `placeholder_endpoint_for()` — byte inversion, not a key derivation
+Two things to settle in F, both already recorded:
 
-Slice E is done when a node generates a real secret with a CSPRNG, persists it
-with owner-only permissions, and keeps a stable endpoint id across restarts.
-Consult the advisor before it lands: key custody is a security-sensitive path.
+- The wire reply to an unauthorised peer must not distinguish "refused" from
+  "no such actor" (ARCHITECTURE.md §7). `TransportError` separates them for the
+  local caller, which is right; serialising that difference back to a rejected
+  peer hands it an enumeration oracle.
+- Iroh's node id converts to `EndpointId` at the adapter boundary. If the domain
+  needs to learn an Iroh type for this, the conversion is in the wrong place.
+
+Consult the advisor before F lands: it is both an architecture boundary and a
+security-sensitive path.
 
 ## Blockers
 
-None.
+None. Note the sandbox has no network, so slice F's Iroh work can be built and
+unit-tested but a real two-node connection will need a run outside it.
 
 ## Notes for the next session
 
@@ -107,5 +156,7 @@ None.
 - `cargo clippy --workspace --all-targets` is warning-free today. `missing_docs`
   is `deny` in every library crate, so undocumented public items — including enum
   struct fields — break the build rather than nagging.
-- Nothing is committed. The tree is clean, green, and uncommitted by design:
-  `docs/prompt.txt` asks for LOOP.md updates and does not authorise commits.
+- Commits use conventional-commit subjects, one per slice, on `master` — the
+  working method is explicitly "one session on the main checkout".
+- `KAMIROH_KEY_FILE` overrides the key path. Use it when running the binary
+  inside a sandbox, or to run several nodes on one machine.

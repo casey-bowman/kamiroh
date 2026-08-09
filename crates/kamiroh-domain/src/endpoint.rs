@@ -67,28 +67,12 @@ impl FromStr for EndpointId {
     type Err = ParseEndpointIdError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() != ENDPOINT_ID_LEN * 2 {
-            return Err(ParseEndpointIdError::Length { got: s.len() });
-        }
-        let src = s.as_bytes();
         let mut out = [0u8; ENDPOINT_ID_LEN];
-        for (i, slot) in out.iter_mut().enumerate() {
-            let hi = hex_digit(src[i * 2])?;
-            let lo = hex_digit(src[i * 2 + 1])?;
-            *slot = (hi << 4) | lo;
-        }
+        crate::hex::decode_into(s.as_bytes(), &mut out).map_err(|error| match error {
+            crate::hex::HexError::Length { got } => ParseEndpointIdError::Length { got },
+            crate::hex::HexError::NotHex { found } => ParseEndpointIdError::NotHex { found },
+        })?;
         Ok(Self(out))
-    }
-}
-
-fn hex_digit(c: u8) -> Result<u8, ParseEndpointIdError> {
-    match c {
-        b'0'..=b'9' => Ok(c - b'0'),
-        b'a'..=b'f' => Ok(c - b'a' + 10),
-        b'A'..=b'F' => Ok(c - b'A' + 10),
-        _ => Err(ParseEndpointIdError::NotHex {
-            found: char::from(c),
-        }),
     }
 }
 

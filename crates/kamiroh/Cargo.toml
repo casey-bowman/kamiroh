@@ -19,4 +19,5 @@ kamiroh-domain.workspace = true
 kamiroh-ports.workspace = true
 kamiroh-app.workspace = true
 kamiroh-adapter-memory.workspace = true
+kamiroh-adapter-fs.workspace = true
 tokio.workspace = true

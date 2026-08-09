@@ -58,15 +58,17 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-ports` | Port traits + per-port error types | domain, `async-trait`, `thiserror` |
 | `kamiroh-app` | Use cases against ports | domain, ports, `async-trait` |
 | `kamiroh-adapter-memory` | In-memory implementation of every driven port | domain, ports, `async-trait` |
+| `kamiroh-adapter-fs` | Node key custody on disk | domain, ports, `async-trait`, `getrandom` |
 | `kamiroh` | Composition root (binary) | all of the above, `tokio` |
 
 ### Deferred crates — a stated decision, not an omission
 
-The build plan's tree also lists `kamiroh-adapter-iroh`, `-kameo`, `-herdr`, and
-`-fs`. They are **not** created yet. An empty crate that exists only to be
+The build plan's tree also lists `kamiroh-adapter-iroh`, `-kameo`, and `-herdr`.
+They are **not** created yet. An empty crate that exists only to be
 `cargo check`ed proves nothing and gets rewritten when the real adapter lands, so
-each arrives with its slice (E–G, J). `kamiroh-adapter-memory` covers the first
-deliverable's "no-op or in-memory adapters so the bin compiles" in one crate.
+each arrives with its slice (F, G, J) — `-fs` arrived this way in slice E.
+`kamiroh-adapter-memory` covered the first deliverable's "no-op or in-memory
+adapters so the bin compiles" in one crate, and remains the test double set.
 
 ---
 
@@ -145,6 +147,14 @@ without escaping; `../etc` and whitespace are rejected at construction.
 a conspicuously named `expose_bytes()` so every place key material leaves custody
 is greppable.
 
+Its constructors exist to stop plaintext copies escaping the type.
+`from_bytes` takes its argument by value, so the caller keeps an unprotected
+array; `from_fill` instead hands the closure a buffer *inside* the secret, and
+`from_hex` / `write_hex_into` parse and render in place. The fill closure is also
+what keeps the domain RNG-free — `kamiroh-adapter-fs` supplies `getrandom`.
+`ParseNodeSecretError` carries no fragment of its input, not even the offending
+character, because that input is key material and errors get logged.
+
 **`Payload` and the agent-agnostic boundary.** kamiroh fixes the control *verbs*
 (`Prompt`, `Status`, `Interrupt`, `Shutdown`) and leaves the *content* opaque: a
 `Payload` is bytes plus a content type, interpreted only by the agent behind the
@@ -196,14 +206,37 @@ smoke path exercises the real allowlist rather than bypassing it. The binary
 self-allows for that reason; a real node's allowlist is built from configured
 peers and does not contain itself.
 
-**Two placeholders, both loud in the code:**
+Key custody is real as of slice E: the secret comes from OS entropy and lives in
+`$XDG_CONFIG_HOME/kamiroh/node.key` (or `$HOME/.config/...`), overridable with
+`KAMIROH_KEY_FILE`. The endpoint id is therefore stable across restarts.
 
-- `InMemoryKeyStore::insecure_dev()` returns a fixed, publicly known secret and
-  persists nothing. Real custody (persistence, owner-only permissions, a CSPRNG)
-  arrives in slice E.
-- `placeholder_endpoint_for()` inverts the secret's bytes. It is **not** a key
-  derivation; the real endpoint id is the ed25519 public key, which the Iroh
-  adapter supplies in slice F.
+**One placeholder remains, loud in the code:** `placeholder_endpoint_for()`
+inverts the secret's bytes. It is **not** a key derivation; the real endpoint id
+is the ed25519 public key, which the Iroh adapter supplies in slice F.
+`InMemoryKeyStore` still exists as a test double but no longer backs the binary.
+
+## 6a. Key custody rules
+
+Enforced by `kamiroh-adapter-fs` and pinned by its tests:
+
+- **Publish with `hard_link`, never `rename` and never in place.** A node
+  identity needs its file to be both non-clobbering and atomically published.
+  `rename` clobbers, destroying an existing identity. `O_CREAT | O_EXCL` on the
+  final path looks safe but publishes the *name* before the contents, so a
+  process starting concurrently reads a zero-length file — an observed race, not
+  a theoretical one. Writing a temp file, fsyncing, then linking gives both.
+- **Check permissions before reading.** A key readable beyond its owner is
+  already compromised; reading it first and erroring afterwards would pull it
+  into memory anyway. The check covers the file (no group/other access at all)
+  *and* its directory (no group/other **write**, which would let another account
+  swap the key file out even though it could never read it).
+- **Both paths are checked.** A key created by an older version, restored from a
+  backup, or copied by hand never went through the create path — that case is
+  exactly what the check exists for.
+- **A corrupt key file is reported, never replaced.** It may be a recoverable
+  identity, and overwriting it destroys the node.
+- **No plaintext copy outlives its function.** Buffers holding key material on
+  the way to or from disk zero themselves on drop, matching `NodeSecret`.
 
 ---
 
@@ -211,7 +244,7 @@ peers and does not contain itself.
 
 | Slice | Crate | Attaches at |
 |---|---|---|
-| E | `kamiroh-adapter-fs` | `KeyStore` — replaces `InMemoryKeyStore` |
+| ~~E~~ | `kamiroh-adapter-fs` | ✅ done — `KeyStore`, replacing `InMemoryKeyStore` in the binary |
 | F | `kamiroh-adapter-iroh` | `Transport` + a front calling `ControlApi`; supplies the real `EndpointId` |
 | | | ⚠ The reply sent **over the wire** to an unauthorised peer must not distinguish "refused" from "no such actor". `TransportError` separates them for the local caller, which is right; serialising that distinction back to a rejected peer would hand it the enumeration oracle §5.4 promises not to give. |
 | G | `kamiroh-adapter-kameo` | `AgentController` — replaces `EchoController` |

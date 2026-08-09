@@ -4,15 +4,18 @@
 //! implementation, hands the wiring to the application layer, and does nothing
 //! else — no policy, no protocol, no agent logic.
 //!
-//! Every port is currently bound to an in-memory adapter, so this binary starts,
-//! reports its endpoint id, and exercises the control path against itself.
+//! Key custody is real: the node's secret is generated from OS entropy and
+//! persisted, so its identity survives a restart. Every other port is still
+//! bound to an in-memory adapter, so this binary starts, reports its endpoint
+//! id, and exercises the control path against itself.
 
 use std::error::Error;
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use kamiroh_adapter_fs::FileKeyStore;
 use kamiroh_adapter_memory::{
-    EchoController, InMemoryAllowlist, InMemoryKeyStore, LoopbackTransport,
-    placeholder_endpoint_for,
+    EchoController, InMemoryAllowlist, LoopbackTransport, placeholder_endpoint_for,
 };
 use kamiroh_app::ControlService;
 use kamiroh_domain::{ActorName, ControlMessage, ControlReply, EndpointId, PeerAddress};
@@ -20,13 +23,28 @@ use kamiroh_ports::{
     AgentController, Allowlist, ControlApi, ControlApiError, KeyStore, Origin, Transport,
 };
 
+/// Overrides where the node secret lives. Useful for running several nodes on
+/// one machine, and for tests that must not touch the real key.
+const KEY_FILE_ENV: &str = "KAMIROH_KEY_FILE";
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    eprintln!("kamiroh: development wiring — every port is bound to an in-memory adapter.");
+    eprintln!(
+        "kamiroh: development wiring — key custody is real; transport, allowlist \
+         and controller are still in-memory."
+    );
 
     // --- Driven ports -------------------------------------------------------
-    let key_store: Arc<dyn KeyStore> = Arc::new(InMemoryKeyStore::insecure_dev());
+    let key_path = match std::env::var_os(KEY_FILE_ENV) {
+        Some(path) => PathBuf::from(path),
+        None => FileKeyStore::default_path()?,
+    };
+    let key_store: Arc<dyn KeyStore> = Arc::new(FileKeyStore::new(&key_path));
     let secret = key_store.load_or_create().await?;
+    println!("key file:    {}", key_path.display());
+
+    // Still a placeholder: the real endpoint id is the ed25519 public key for
+    // this secret, which arrives with the Iroh adapter in slice F.
     let local_endpoint = placeholder_endpoint_for(&secret);
 
     // Self-allow, so the loopback smoke path below is authorised. A real node's

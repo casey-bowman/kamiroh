@@ -1,0 +1,21 @@
+[package]
+name = "kamiroh-adapter-fs"
+description = "Filesystem-backed kamiroh adapters: node key custody on disk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+async-trait.workspace = true
+# OS entropy only — no PRNG layer, since a node secret is generated once.
+# "std" is what implements `Error` for its error type, so a failure can be
+# reported through `KeyStoreError::Backend` as a source rather than a string.
+getrandom = { version = "0.3", features = ["std"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros"] }
+tempfile = "3"
