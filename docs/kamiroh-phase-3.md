@@ -131,7 +131,10 @@ substrate rather than by preference.** Read out of Herdr's own API schema:
   is the one this run suggests matters less.
 
   **This is the design question P1 should actually answer**, and it is the only
-  one of the three still open.
+  one of the three still open. The P1 read-fix run strengthened it: a prompt that
+  settled immediately made kamiroh answer `Output` carrying a splash screen — a
+  finished-looking reply to a task that never ran. Scraped terminal text can be
+  confidently wrong; a state cannot be wrong in the same way.
 
   **With one dependency P1 must not assume away.** This rests on `Blocked` being
   trustworthy, and M3 measured that it is not equally so: a startup permission

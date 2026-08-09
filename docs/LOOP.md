@@ -119,12 +119,35 @@ alongside `visible` is a maximum, not a request: herdr 0.8.0 answered a 200-line
 ask with the 57 lines on screen, so it is kept and documented rather than
 dropped.
 
-**Verified:** 192 tests, fmt and clippy clean. Both halves of the fix rest on
-observed real-daemon behaviour rather than on the schema — the refusal code
-`agent_not_idle` came out of the live P2 run, and the `visible` + `lines`
-acceptance was checked against herdr 0.8.0 directly. **An end-to-end re-run
-through `demos/use_it.sh` has not been done**, and is what would close this:
-the last four surprises in this adapter all came from a real run.
+**Verified:** 192 tests, fmt and clippy clean. Both halves rest on observed
+real-daemon behaviour rather than on the schema — the refusal code
+`agent_not_idle` came out of the live P2 run, and `visible` + `lines` was checked
+against herdr 0.8.0 directly, where a 200-line ask returned the 57 lines on
+screen.
+
+**The live re-run through `demos/use_it.sh` verified one direction and could not
+reach the other.** No `controller backend failed`: the prompt returned an answer,
+`recent` was used for a settled agent, and the path that failed on every prompt
+before now works. **The `visible` path is still unverified live**, because the
+agent in this run never reached `working` at all — so say so rather than let a
+green-looking run stand in for it.
+
+**Why it never worked, and it is not kamiroh's.** The freshly started agent came
+up with `manual mode on` and sat `idle` for the whole run, doing nothing with the
+prompt. A direct `agent.prompt` to the same pane, bypassing kamiroh entirely,
+behaved the same way — an empty response, and `agent.get` reporting `kind: null`
+for a pane `agent.start` had accepted as `claude`. Diagnosing that belongs to
+Herdr or Claude Code. What it costs kamiroh is a verification, and the earlier P2
+run shows the working path is reachable in a directory that has been used before.
+
+**And the run found something worse than the bug it was checking.** Because the
+prompt settled `idle` immediately, kamiroh answered with `Output` — a *finished*
+reply — carrying the Claude Code splash screen. A confident, complete-looking
+answer to a task that never ran. M1 recorded "what counts as output is a
+heuristic"; this is that heuristic producing a false success rather than a
+truncated one, and a false success is the harder failure to notice. It is also
+the strongest argument yet that what a control layer should deliver is *state*,
+not scraped terminal text — which is the open question at the end of P1.
 
 **P2 — using it, and the premise that did not survive**
 
