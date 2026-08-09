@@ -49,6 +49,11 @@ claude --advisor opus
 Fable is **not** currently selectable as an advisor; Opus is. `/advisor opus`
 switches an already-running session. See the build plan's preconditions table.
 
+**The advisor gate has never actually been met.** Every security argument in
+kamiroh was written and checked by the same author. That is open decision 3 in
+[OPEN-DECISIONS.md](./OPEN-DECISIONS.md), and turning the advisor on here is
+what would settle it.
+
 Accept **workspace trust** for this repository only. Prefer starting Claude at the git root, not an unrelated parent directory.
 
 Default workflow: **one session on the main checkout**, one slice at a time. Do not pass `--worktree` unless you intentionally want an isolated session. Claude can create native worktrees under `.claude/worktrees/` when needed.

@@ -1,5 +1,11 @@
 # LOOP
 
+> **Three decisions are open and waiting on a person:**
+> [OPEN-DECISIONS.md](./OPEN-DECISIONS.md) — a malformed allowlist stopping the
+> node, whether NAT traversal actually works, and whether anyone but the author
+> has read the security posture. Raise them at the start of a planning pass; an
+> item leaves that list by being decided, not by going stale.
+
 ## Current phase
 
 **Phase 2 is finished too** — M1–M4 and the review queue. The next pass is

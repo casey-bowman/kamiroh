@@ -116,6 +116,10 @@ valuable thing kamiroh can receive is not a feature.
 
 ### P3 — Trust
 
+*The first two items below are standing decisions rather than tasks, and live in
+[OPEN-DECISIONS.md](./OPEN-DECISIONS.md) — the list that outlives this plan. The
+third is a candidate on that list, not yet proposed.*
+
 - **A security review by someone who is not its author.** The posture has never
   been read by anyone else: the enumeration argument, the local-trust boundary,
   and §5a's disclosure trade in particular. Demonstrating that the disclosure
