@@ -57,9 +57,25 @@ self-hosted pkarr server would remove the third party entirely.
 Tests are `Direct` by construction, including the two-node integration tests:
 publishing to a public service is not a decision a test suite makes on its own.
 
-**Not yet verified live.** Proving `anywhere` works means actually publishing
-this machine's addresses to n0's service, which is the disclosure described
-above. Left for an explicit decision rather than assumed.
+**Verified live**, with a negative control — which is the part that makes it
+mean anything, since two processes on one host could plausibly have found each
+other some other way:
+
+```
+reach=direct,   KAMIROH_PEER=<id>  -> unreachable: no address for this peer, and
+                                      this node resolves nothing by id
+                                      (set the reach to `anywhere` to look peers up)
+reach=anywhere, KAMIROH_PEER=<id>  -> Output(Payload { len: 11 })
+```
+
+Same id, same two nodes, one variable changed. B was given A's endpoint id and
+nothing else — no host, no port, at any point.
+
+**What it does not prove:** NAT traversal. Both nodes were on this machine, so
+no relay was needed and none was necessarily used. What it proves is the thing
+that actually blocked the product — that identity is sufficient to address a
+peer. A real home-to-cafe run needs a second machine on a different network, and
+is the remaining gap in M2's claim.
 
 **M1 — a real agent**
 

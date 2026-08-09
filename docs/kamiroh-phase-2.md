@@ -138,7 +138,7 @@ manifest, and "which state means finished" is exactly the sort of thing that
 differs between them. M3 should exercise at least `codex` or `gemini` before
 kamiroh claims to drive agents generally.
 
-### M2 — It works from where I am — *implemented, live-untested*
+### ~~M2~~ — It works from where I am ✅ done (one caveat)
 
 *Reach the home node from a different network.*
 
@@ -170,9 +170,18 @@ The security-story risk the plan predicted is where the work actually went. The
 sharpest sentence to keep: **reachable is not admitted, but "unlisted peers
 cannot even find me" stops being true.** That is why it is opt-in.
 
-**Still to do:** a live run, which necessarily publishes this machine's
-addresses to n0's service. And this remains the milestone that most deserves the
-advisor gate — the reasoning in §5a has not been reviewed by anyone.
+**Verified live** against n0's real service, with a negative control: the same
+bare endpoint id fails under `direct` with an error naming the fix, and succeeds
+under `anywhere`. One variable changed, so discovery is demonstrably what did
+the work.
+
+**The caveat, stated plainly:** both nodes were on one machine, so this proves
+identity-only addressing and *not* NAT traversal. A relay may never have been
+used. Closing that needs a second machine on a different network — worth doing
+the first time you actually sit in a cafe, rather than simulating it.
+
+This remains the milestone that most deserves the advisor gate: the reasoning in
+ARCHITECTURE.md §5a has been read by nobody but its author.
 
 ### M3 — More than one agent
 
