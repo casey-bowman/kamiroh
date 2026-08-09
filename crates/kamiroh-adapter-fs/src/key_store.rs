@@ -72,7 +72,7 @@ impl FileKeyStore {
         let base = match std::env::var_os("XDG_CONFIG_HOME") {
             Some(dir) if !dir.is_empty() => PathBuf::from(dir),
             _ => {
-                let home = std::env::var_os("HOME").ok_or(KeyStoreError::Malformed {
+                let home = std::env::var_os("HOME").ok_or(KeyStoreError::Unconfigured {
                     reason: "neither XDG_CONFIG_HOME nor HOME is set".to_owned(),
                 })?;
                 PathBuf::from(home).join(".config")

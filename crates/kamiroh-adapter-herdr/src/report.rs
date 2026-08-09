@@ -12,14 +12,18 @@
 //! what [`Link`] names. Decorating it covers local and remote uniformly, and
 //! changes no port.
 //!
-//! # What this does not cover
+//! # Two sources, one reporter
 //!
-//! A node serving agents for remote peers has nobody at its pane, and inbound
-//! messages arrive through the Iroh front rather than through any `Link`. Its
-//! pane will not show its agent working while a peer drives it. That wants the
-//! `AgentController` decorator after all, as a second reporter — Herdr's
-//! `pane.report_agent` takes an optional `seq`, which is the mechanism for
-//! ordering two sources reporting on one pane.
+//! A pane's own console is not the only thing that drives an agent. A node
+//! serving peers has nobody at its pane, and inbound messages arrive through
+//! the Iroh front — never through a `Link` — so decorating `Link` alone leaves
+//! a serving node's pane permanently idle while a peer works it.
+//!
+//! So `AgentController` is decorated too, and the two feed **one** reporter.
+//! J2's note suggested a second reporter ordered with Herdr's optional `seq`;
+//! sharing a channel is better, because it removes the race rather than
+//! sequencing it. One channel, one connection, one order — the order the
+//! channel already imposes.
 //!
 //! # Reporting never delays or fails a control message
 //!
@@ -32,6 +36,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kamiroh_domain::{ActorName, ControlMessage, ControlReply};
+use kamiroh_ports::{AgentController, ControllerError};
 use tokio::sync::mpsc;
 
 use crate::link::{Link, LinkError};
@@ -125,40 +130,94 @@ fn state_after(kind: Kind, result: &Result<ControlReply, LinkError>) -> PaneAgen
     }
 }
 
-/// Wraps `link` so it reports to Herdr, if this process is in a pane.
+/// A handle onto the one background reporter, for wrapping things.
 ///
-/// Returns the link to use and a line describing what was arranged. Outside a
-/// pane the link is returned untouched: kamiroh runs outside Herdr as a matter
-/// of course, and that is not a degraded mode worth warning about.
-#[cfg(unix)]
-pub fn attach(link: Arc<dyn Link>, agent: &ActorName) -> (Arc<dyn Link>, String) {
-    let Some(pane) = Pane::from_env() else {
-        return (link, "not in a Herdr pane; not reporting".to_owned());
-    };
-
-    let (reports, receiver) = mpsc::channel(BACKLOG);
-    let summary = format!(
-        "reporting {agent} to pane {} via {}",
-        pane.id,
-        pane.socket.display()
-    );
-
-    // An opening state claims the pane for kamiroh. Herdr falls back to reading
-    // the terminal when nothing reports, and would otherwise label this pane by
-    // whatever kamiroh's output happens to look like.
-    let _ = reports.try_send(PaneAgentState::Idle);
-
-    tokio::spawn(run(pane, agent.to_string(), receiver));
-    (Arc::new(ReportingLink::new(link, reports)), summary)
+/// Cheap to clone; every clone feeds the same channel, which is the point.
+#[derive(Clone)]
+pub struct Reporter {
+    reports: mpsc::Sender<PaneAgentState>,
 }
 
-/// Non-Unix: Herdr's socket is a named pipe there, which this does not speak.
-#[cfg(not(unix))]
-pub fn attach(link: Arc<dyn Link>, _agent: &ActorName) -> (Arc<dyn Link>, String) {
-    (
-        link,
-        "Herdr reporting is Unix-only; not reporting".to_owned(),
-    )
+impl Reporter {
+    /// Starts reporting for `agent`, if this process is in a Herdr pane.
+    ///
+    /// Returns the reporter and a line describing what was arranged, or `None`
+    /// outside a pane — kamiroh runs outside Herdr as a matter of course, and
+    /// that is not a degraded mode worth warning about.
+    #[cfg(unix)]
+    pub fn start(agent: &ActorName) -> Option<(Self, String)> {
+        let pane = Pane::from_env()?;
+        let (reports, receiver) = mpsc::channel(BACKLOG);
+        let summary = format!(
+            "reporting {agent} to pane {} via {}",
+            pane.id,
+            pane.socket.display()
+        );
+
+        // An opening state claims the pane for kamiroh. Herdr falls back to
+        // reading the terminal when nothing reports, and would otherwise label
+        // this pane by whatever kamiroh's output happens to look like.
+        let _ = reports.try_send(PaneAgentState::Idle);
+
+        tokio::spawn(run(pane, agent.to_string(), receiver));
+        Some((Self { reports }, summary))
+    }
+
+    /// Non-Unix: Herdr's socket is a named pipe there, which this does not speak.
+    #[cfg(not(unix))]
+    pub fn start(_agent: &ActorName) -> Option<(Self, String)> {
+        None
+    }
+
+    /// Reports what the pane's own console does with its agent.
+    pub fn wrap_link(&self, link: Arc<dyn Link>) -> Arc<dyn Link> {
+        Arc::new(ReportingLink::new(link, self.reports.clone()))
+    }
+
+    /// Reports what *anyone* does with this node's agents, peers included.
+    ///
+    /// This is the half a serving node needs: its pane has nobody at it, and
+    /// the messages arrive through the Iroh front.
+    pub fn wrap_controller(
+        &self,
+        controller: Arc<dyn AgentController>,
+    ) -> Arc<dyn AgentController> {
+        Arc::new(ReportingController {
+            inner: controller,
+            reports: self.reports.clone(),
+        })
+    }
+}
+
+/// An [`AgentController`] that reports what passes through it.
+struct ReportingController {
+    inner: Arc<dyn AgentController>,
+    reports: mpsc::Sender<PaneAgentState>,
+}
+
+#[async_trait]
+impl AgentController for ReportingController {
+    async fn dispatch(
+        &self,
+        agent: &ActorName,
+        message: ControlMessage,
+    ) -> Result<ControlReply, ControllerError> {
+        let kind = Kind::of(&message);
+        if matches!(kind, Kind::Prompt) {
+            let _ = self.reports.try_send(PaneAgentState::Working);
+        }
+
+        let result = self.inner.dispatch(agent, message).await;
+
+        // The controller's error type differs from a link's, but the question
+        // is the same one: what does this reply say the agent is doing?
+        let state = match &result {
+            Ok(reply) => state_after(kind, &Ok(reply.clone())),
+            Err(_) => PaneAgentState::Unknown,
+        };
+        let _ = self.reports.try_send(state);
+        result
+    }
 }
 
 /// Drains state updates onto the socket.
@@ -307,6 +366,71 @@ mod tests {
         drop(receiver);
         // Still usable afterwards: dropping updates is not a poisoned state.
         assert!(link.send(ControlMessage::Interrupt).await.is_ok());
+    }
+
+    /// A serving node's pane must show work that arrives from a *peer*, which
+    /// never touches a `Link`. This is the gap J2 left open.
+    #[tokio::test]
+    async fn a_controller_reports_work_that_never_touched_a_link() {
+        use kamiroh_domain::ActorName;
+
+        struct StubController;
+
+        #[async_trait]
+        impl AgentController for StubController {
+            async fn dispatch(
+                &self,
+                _agent: &ActorName,
+                _message: ControlMessage,
+            ) -> Result<ControlReply, ControllerError> {
+                Ok(ControlReply::Output(Payload::text("done")))
+            }
+        }
+
+        let (sender, mut receiver) = mpsc::channel(BACKLOG);
+        let controller = ReportingController {
+            inner: Arc::new(StubController),
+            reports: sender,
+        };
+
+        let agent = ActorName::new("agent").unwrap();
+        controller
+            .dispatch(&agent, ControlMessage::Prompt(Payload::text("go")))
+            .await
+            .unwrap();
+        drop(controller);
+
+        let mut seen = Vec::new();
+        while let Some(state) = receiver.recv().await {
+            seen.push(state);
+        }
+        assert_eq!(seen, vec![PaneAgentState::Working, PaneAgentState::Idle]);
+    }
+
+    /// Both halves feed one channel, so their reports cannot race — which is
+    /// why no `seq` is needed to order them.
+    #[tokio::test]
+    async fn both_decorators_share_one_stream_of_reports() {
+        let (sender, mut receiver) = mpsc::channel(BACKLOG);
+        let reporter = Reporter {
+            reports: sender.clone(),
+        };
+
+        let link = reporter.wrap_link(Arc::new(StubLink(Ok(ControlReply::Accepted))));
+        link.send(ControlMessage::Interrupt).await.unwrap();
+        drop(link);
+        drop(reporter);
+        drop(sender);
+
+        let mut seen = Vec::new();
+        while let Some(state) = receiver.recv().await {
+            seen.push(state);
+        }
+        assert_eq!(
+            seen,
+            vec![PaneAgentState::Idle],
+            "the link's report arrived"
+        );
     }
 
     #[tokio::test]

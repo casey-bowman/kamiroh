@@ -30,6 +30,41 @@ with no agent runtime, and for tests.
 
 ## Done
 
+**M4 — the rest: reporting from both directions, reload, and the nits**
+
+**A serving node's pane was permanently idle.** J2 decorated `Link`, which is
+what a *console* drives; a node serving peers has nobody at its console and its
+work arrives through the Iroh front. `AgentController` is decorated too now.
+
+J2's note said to run a second reporter and order the two with Herdr's optional
+`seq`. Sharing one channel is better: it removes the race rather than sequencing
+it, and leaves one connection and one order — the channel's. `seq` stays
+available if a genuinely independent source ever turns up. What remains
+uncovered is one pane showing one agent; a node hosting several would have them
+overwrite each other, which is M3's to solve.
+
+**`FileAllowlist::reload()` finally has a caller: `SIGHUP`.** A signal rather
+than a `/reload` console command, because the node that needs it is the one with
+nobody at its pane. Verified against a running node:
+
+```
+good edit + SIGHUP ->  INFO  allowlist reloaded on SIGHUP  peers=2
+bad edit  + SIGHUP ->  WARN  allowlist reload failed; keeping the previous one
+                             … line 1: "this is not an endpoint id" … got 26
+```
+
+The second line is the one that matters — it is the difference between a fumbled
+edit costing a log line and costing every peer, and it is why the composition
+root keeps the concrete handle while everything else uses the port.
+
+**The nits.** `KeyStoreError` gained `Unconfigured { reason }`, so an
+unconfigured environment stops being reported as a corrupt key file — and the
+two error types stop disagreeing, which was the observation recorded in I. The
+other two stand as decisions rather than debt: `ScopedTempFile` still has no
+disarm because nothing needs one, and an interrupted prompt still answers
+`ControllerError::Rejected` — M1's `ControlReply::Partial` did not resolve it,
+since an abandoned prompt has no output to carry.
+
 **M4 — observability**
 
 `tracing` across the app and adapters, a subscriber in the binary, and two rules
@@ -862,8 +897,9 @@ touch `kamiroh-domain`, which nothing since slice B has.
 
 ## Known nits (not worth their own commit)
 
-- `FileKeyStore::default_path()` returns `KeyStoreError::Malformed` when neither
-  `XDG_CONFIG_HOME` nor `HOME` is set. Nothing is malformed there — the
+- ~~`FileKeyStore::default_path()` returns `KeyStoreError::Malformed`~~ —
+  **fixed in M4** with a new `KeyStoreError::Unconfigured { reason }`, which is
+  what the note below concluded was needed. Kept for the reasoning: Nothing is malformed there — the
   environment is unconfigured — and it reads as a corrupt-key-file error to
   whoever hits it.
 

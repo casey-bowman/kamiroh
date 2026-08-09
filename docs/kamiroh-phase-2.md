@@ -213,7 +213,7 @@ Note what should **not** be done to make this easier: pre-approving trust from a
 script. The prompt guards an agent's access to a directory, and automating past
 it in a test is one short step from automating past it in the product.
 
-### M4 — Operable and trustworthy — *observability and the queue done*
+### ~~M4~~ — Operable and trustworthy ✅ done
 
 *The accumulated debt, which is small and known.*
 
@@ -225,13 +225,13 @@ it in a test is one short step from automating past it in the product.
   demonstrated, one real bug found and fixed, one struck as resolved by M1. Only
   malformed-allowlist-is-fatal remains, and it is a human decision rather than
   an unexamined argument.
-- **Serving-node reporting** — the known J2 gap; the `AgentController` decorator
-  after all, using `pane.report_agent`'s `seq` to order two sources.
-- **Allowlist reload trigger** — `reload()` has no caller. A `/reload` console
-  command is cheaper than a signal handler and already inside the trust boundary.
-- **The three known nits** in LOOP.md, including `KeyStoreError` and
-  `AllowlistError` disagreeing about how to say "the environment is
-  unconfigured".
+- ~~**Serving-node reporting**~~ ✅ Done, but not as planned: both decorators
+  share one reporter instead of being ordered with `seq`, which removes the race
+  rather than sequencing it.
+- ~~**Allowlist reload trigger**~~ ✅ Done via `SIGHUP`, not a console command:
+  the node that needs reloading is the headless one with nobody at its pane.
+- ~~**The three known nits**~~ ✅ One fixed (`KeyStoreError::Unconfigured`, so
+  the two error types agree); two stand as decisions rather than debt.
 
 ---
 

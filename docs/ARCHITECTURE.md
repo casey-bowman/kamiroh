@@ -422,6 +422,11 @@ the same, because what they protect is not the same:
   rather than swallowed. The adapter does not choose between the two risks —
   retaining a stale list can miss a revocation, emptying one locks out every
   peer over a typo — because only the caller knows which it is running.
+- **`SIGHUP` re-reads it.** A signal rather than a console command, because the
+  node that needs this is the one with nobody at its pane: a home node serving
+  peers, whose allowlist is what an operator edits. The composition root keeps
+  the concrete handle solely for this; everything else uses the port. A bad edit
+  costs a `warn` naming the file and line, and the previous set stays in force.
 
 ## 6c. Controller actor rules
 
@@ -461,12 +466,18 @@ as `KameoController` spawns actors already idle. And nothing maps to Herdr's
 `blocked`, which means "waiting on a human"; no kamiroh agent currently waits on
 input, and when one does, that is where it surfaces.
 
-**Not covered:** a node serving agents for remote peers has nobody at its pane,
-and inbound messages arrive through the Iroh front rather than any `Link`, so
-its pane does not show its agent working while a peer drives it. That wants the
-`AgentController` decorator after all, as a *second* reporter — `pane.report_agent`
-takes an optional `seq`, which is the mechanism for ordering two sources on one
-pane.
+**Both directions report, through one reporter.** Decorating `Link` alone left a
+serving node's pane permanently idle: it has nobody at its console, and peers'
+messages arrive through the Iroh front. So `AgentController` is decorated too.
+
+The two share a single channel rather than being two reporters ordered by
+Herdr's optional `seq`. Sharing removes the race instead of sequencing it — one
+channel, one connection, and the order the channel already imposes. `seq`
+remains available if a genuinely independent source ever appears.
+
+**Still not covered:** one pane shows one agent. A node hosting several would
+have them overwrite each other in the pane list, which is M3's problem to
+solve.
 
 ## 6d. Herdr reporting rules
 

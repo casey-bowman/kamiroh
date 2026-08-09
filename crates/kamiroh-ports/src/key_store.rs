@@ -25,6 +25,19 @@ pub enum KeyStoreError {
     #[error("no node secret available and this key store cannot create one")]
     Missing,
 
+    /// No location could be derived from the environment.
+    ///
+    /// Distinct from [`Malformed`](Self::Malformed), which is about the
+    /// *contents* of a store. Neither `XDG_CONFIG_HOME` nor `HOME` being set is
+    /// not a corrupt key — it is a machine that has not said where to put one,
+    /// and reporting it as corruption sends whoever hits it looking for a
+    /// damaged file that does not exist.
+    #[error("cannot locate the key store: {reason}")]
+    Unconfigured {
+        /// What was missing.
+        reason: String,
+    },
+
     /// Stored material was not a well-formed secret.
     #[error("stored key material is malformed: {reason}")]
     Malformed {

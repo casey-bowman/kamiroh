@@ -466,6 +466,24 @@ mod tests {
         assert!(!allowlist.is_allowed(&endpoint(1)));
     }
 
+    /// The property `SIGHUP` reload depends on: a fumbled edit costs a log line
+    /// rather than every peer. Already covered above for the error path; this
+    /// pins that the *path* is retained too, so a signal handler can keep using
+    /// the same handle.
+    #[test]
+    fn a_reloadable_allowlist_remembers_where_it_came_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("allow");
+        std::fs::write(&path, format!("{}\n", hex(1))).unwrap();
+
+        let allowlist = FileAllowlist::load(&path).unwrap();
+        assert_eq!(allowlist.path(), path);
+
+        std::fs::write(&path, format!("{}\n{}\n", hex(1), hex(2))).unwrap();
+        assert_eq!(allowlist.reload().unwrap(), 2);
+        assert_eq!(allowlist.path(), path, "the path must survive a reload");
+    }
+
     #[test]
     fn an_empty_file_permits_nobody() {
         let (_dir, allowlist) = load("");

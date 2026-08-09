@@ -160,10 +160,25 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let secret = key_store.load_or_create().await?;
     let local_endpoint = endpoint_id_for(&secret);
 
-    let (allowlist, allow_summary) = build_allowlist()?;
+    let allowlists = build_allowlist()?;
+    let allow_summary = allowlists.summary.clone();
+    let allowlist = Arc::clone(&allowlists.port);
+    if let Some(reloadable) = allowlists.reloadable.clone() {
+        reload_allowlist_on_hangup(reloadable);
+    }
 
     let agent = ActorName::new("agent")?;
     let (controller, agent_summary) = build_controller(&agent);
+
+    // One reporter, fed from both directions. The console reports what a person
+    // at this pane does; the controller reports what *anyone* does, which is
+    // the half a serving node needs — its pane has nobody at it and the work
+    // arrives through the Iroh front.
+    let reporter = report::Reporter::start(&agent);
+    let controller = match &reporter {
+        Some((reporter, _)) => reporter.wrap_controller(controller),
+        None => controller,
+    };
 
     // --- Application --------------------------------------------------------
     let control: Arc<dyn ControlApi> = Arc::new(ControlService::new(allowlist, controller));
@@ -224,7 +239,10 @@ async fn run() -> Result<(), Box<dyn Error>> {
     // Herdr keeps a state per pane. Wrapping the link is what keeps that state
     // honest for a *remote* agent too: the messages never touch this node's
     // controller, so nothing downstream of it could report them.
-    let (link, herdr) = report::attach(link, &agent);
+    let (link, herdr) = match &reporter {
+        Some((reporter, summary)) => (reporter.wrap_link(link), summary.clone()),
+        None => (link, "not in a Herdr pane; not reporting".to_owned()),
+    };
     println!("pane:        {}", link.describe());
     println!("herdr:       {herdr}");
 
@@ -296,24 +314,26 @@ fn build_controller(agent: &ActorName) -> (Arc<dyn AgentController>, String) {
 /// startup output always names the source: an allowlist that silently came from
 /// somewhere other than where the operator was editing is the failure mode most
 /// worth making impossible to miss.
-fn build_allowlist() -> Result<(Arc<dyn Allowlist>, String), Box<dyn Error>> {
+fn build_allowlist() -> Result<Allowlists, Box<dyn Error>> {
     if let Some(raw) = std::env::var_os(ALLOW_ENV) {
         let endpoints = parse_allow_env(&raw.to_string_lossy())?;
         let summary = match endpoints.len() {
             0 => format!("0 peer(s) — {ALLOW_ENV} is set but empty; nothing is admitted"),
             count => format!("{count} peer(s) from {ALLOW_ENV}"),
         };
-        return Ok((
-            Arc::new(InMemoryAllowlist::with_endpoints(endpoints)),
+        // An env-var allowlist has nothing to re-read, so it is not reloadable.
+        return Ok(Allowlists {
+            port: Arc::new(InMemoryAllowlist::with_endpoints(endpoints)),
+            reloadable: None,
             summary,
-        ));
+        });
     }
 
     let path = match std::env::var_os(ALLOW_FILE_ENV) {
         Some(path) => PathBuf::from(path),
         None => FileAllowlist::default_path()?,
     };
-    let allowlist = FileAllowlist::load(&path)?;
+    let allowlist = Arc::new(FileAllowlist::load(&path)?);
     let summary = match allowlist.len() {
         0 => format!(
             "0 peer(s) — add endpoint ids to {}, one per line; nothing is admitted",
@@ -321,8 +341,65 @@ fn build_allowlist() -> Result<(Arc<dyn Allowlist>, String), Box<dyn Error>> {
         ),
         count => format!("{count} peer(s) from {}", path.display()),
     };
-    Ok((Arc::new(allowlist), summary))
+    Ok(Allowlists {
+        port: Arc::clone(&allowlist) as Arc<dyn Allowlist>,
+        reloadable: Some(allowlist),
+        summary,
+    })
 }
+
+/// The allowlist, plus the handle that can re-read it.
+///
+/// The port is what everything uses; the concrete handle exists only so a
+/// signal can call `reload`. Keeping both is the composition root's job — it is
+/// the one place allowed to know which implementation it chose.
+struct Allowlists {
+    port: Arc<dyn Allowlist>,
+    reloadable: Option<Arc<FileAllowlist>>,
+    summary: String,
+}
+
+/// Re-reads the allowlist on `SIGHUP`, for as long as the node runs.
+///
+/// A signal rather than a console command, because the node that needs this is
+/// the one with nobody at its pane: a home node serving peers, whose allowlist
+/// is the thing an operator edits. `reload` keeps the previous set when the new
+/// file is bad, so a fumbled edit costs a log line rather than every peer.
+#[cfg(unix)]
+fn reload_allowlist_on_hangup(allowlist: Arc<FileAllowlist>) {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    tokio::spawn(async move {
+        let mut hangup = match signal(SignalKind::hangup()) {
+            Ok(hangup) => hangup,
+            Err(error) => {
+                tracing::warn!(%error, "cannot listen for SIGHUP; allowlist will not reload");
+                return;
+            }
+        };
+
+        while hangup.recv().await.is_some() {
+            match allowlist.reload() {
+                Ok(peers) => tracing::info!(
+                    path = %allowlist.path().display(),
+                    peers,
+                    "allowlist reloaded on SIGHUP"
+                ),
+                // The previous set is still in force; say so, because "reload
+                // failed" and "nobody is admitted now" are very different.
+                Err(error) => tracing::warn!(
+                    path = %allowlist.path().display(),
+                    %error,
+                    "allowlist reload failed; keeping the previous one"
+                ),
+            }
+        }
+    });
+}
+
+/// Non-Unix: no `SIGHUP`, so the allowlist is read once at startup.
+#[cfg(not(unix))]
+fn reload_allowlist_on_hangup(_allowlist: Arc<FileAllowlist>) {}
 
 /// Parses the comma-separated override.
 fn parse_allow_env(raw: &str) -> Result<Vec<EndpointId>, Box<dyn Error>> {
