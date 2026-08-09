@@ -85,12 +85,14 @@ carry them.
 **Done when** a caller can follow a long task without disturbing it, and can
 actually stop a remote agent.
 
-**Do this first, before any of the design below: pass a `source`.** The P2 run
-found kamiroh's `agent.read` is *refused* whenever the agent is working, and
-Herdr's error names the fix. This is a bug in M1, not a design question — the
-`Partial{Busy}` path cannot execute as built. It wants a test against something
-that refuses the read the way the real daemon does, since nine tests against a
-fake that answers it all passed.
+**~~Do this first, before any of the design below: choose the read `source` by
+state.~~ Done.** The P2 run found kamiroh's `agent.read` is *refused* whenever
+the agent is working — M1 asked for `recent`, correctly reasoned for a finished
+agent, and Herdr cannot serve it for a working one. A bug rather than a design
+question: the `Partial{Busy}` path could not execute as built. Fixed by choosing
+`visible` for a working agent and falling back to it on `agent_not_idle`, and by
+giving the test double the ability to refuse a request — which is what let nine
+tests agree with a read the real daemon rejects. See LOOP.md, P1.
 
 **Decisions to settle first — two of the three are now answered by the
 substrate rather than by preference.** Read out of Herdr's own API schema:

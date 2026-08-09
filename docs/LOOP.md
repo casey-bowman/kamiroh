@@ -20,9 +20,13 @@ code rather than remembered.
 **Phase 3's own question — P1 or P2 — was decided: P2, the "use it" half.** It
 is done, and it corrected the plan that proposed it (see P2 below). Two of P1's
 three design questions turned out to be settled by Herdr's API, and the third
-changed shape. **P1 is next, and it opens with a bug rather than a design: a
-`source` on `agent.read`, because the read kamiroh sends is refused whenever the
-agent is working.**
+changed shape.
+
+**P1 has started, with the bug P2 found rather than with a design.** The read
+source is fixed; a prompt to a working agent now returns `Partial{Busy}` instead
+of failing. What remains of P1 is the vocabulary: renaming `Shutdown` to what it
+does, and the one design question still open — whether the thing worth pushing
+to a remote operator is *"it needs you"* rather than more output.
 
 **The lettered plan is finished.** A→J are all complete.
 
@@ -51,6 +55,67 @@ reaches a coding agent that Herdr is managing. `EchoAgent` remains for nodes
 with no agent runtime, and for tests.
 
 ## Done
+
+**P1 (first slice) — the read that could not run**
+
+P2 found that a prompt to a working agent fails outright: kamiroh asks
+`agent.read` for `recent`, and Herdr refuses that source while an agent is
+working. So M1's `Partial{Busy}` path — the normal case for a coding agent —
+could never execute. Fixed.
+
+**The source is chosen by the settled state, *and* a refusal falls back.** Both,
+because they cover different things:
+
+- **Choosing** avoids a round trip that would always fail. A working or unknown
+  agent is read `visible`; a settled one `recent`, which still includes what has
+  scrolled away and is what a finished answer wants.
+- **Falling back** covers what choosing cannot. The settled state is a
+  moment-old observation of something that moves on its own — the same reasoning
+  that put `Agent::status` in M1 — so an agent that had settled may be working
+  again by the time the read lands. It also removes an assumption about
+  `Blocked`: a blocked agent is not working, so it is asked for `recent`, and if
+  Herdr declines to scroll a dialog too, the retry answers instead of the run
+  failing. Nobody had tested that case; now nobody needs to.
+
+**Only `agent_not_idle` is retried.** Falling back on any refusal would turn a
+broken target into a plausible-looking answer, so `pane_not_found` stays a
+failure. Matched on the **code**, never the message — established practice here,
+and the prose is Herdr's to reword.
+
+**The real deliverable is the test double.** `FakeHerdr::scripted` answered
+positionally and never read the request, which is precisely why nine tests
+agreed with a read the daemon rejects: *a fake that cannot disagree with a
+request cannot catch a request being wrong*. `FakeHerdr::answering` now sees
+each request, so a test can refuse one source and serve another, and
+`read_sources()` asserts which was asked for. `scripted` is kept, implemented on
+top of it.
+
+**Mutation-tested, and how it fails is the interesting part.** Pinning the
+source back to `Recent` fails the new test on the *source* assertion —
+`["recent", "visible"]` — not on the outcome. The fallback rescues the result,
+so the mutation costs a wasted round trip on every prompt rather than breaking
+anything. Asserting the outcome alone would not have caught it; asserting which
+source was requested does.
+
+**What a `Partial{Busy}` now carries is weaker, and that is stated rather than
+implied.** The screen mid-task may be a spinner and a half-drawn diff rather
+than anything the agent has "said". The alternative was the prompt failing,
+which is what it did. ARCHITECTURE.md §6e says so.
+
+**Two corrections to the P2 write-up below.** It said kamiroh "has never passed"
+a source. It did — `recent`, with a comment giving a good reason that is right
+about a *finished* agent. Better than nobody setting it, and the correction
+matters in a file that had just been through a stale-docs pass. And `lines`
+alongside `visible` is a maximum, not a request: herdr 0.8.0 answered a 200-line
+ask with the 57 lines on screen, so it is kept and documented rather than
+dropped.
+
+**Verified:** 192 tests, fmt and clippy clean. Both halves of the fix rest on
+observed real-daemon behaviour rather than on the schema — the refusal code
+`agent_not_idle` came out of the live P2 run, and the `visible` + `lines`
+acceptance was checked against herdr 0.8.0 directly. **An end-to-end re-run
+through `demos/use_it.sh` has not been done**, and is what would close this:
+the last four surprises in this adapter all came from a real run.
 
 **P2 — using it, and the premise that did not survive**
 
@@ -84,11 +149,12 @@ in CLAUDE.md — *a fake built from a schema agrees with whatever you assumed th
 schema meant* — landing on the one behaviour nobody thought to doubt.
 
 **`source` is a correctness requirement, not a refinement.** Herdr names the fix
-in its own error text. `agent.read` takes `source` ∈ `visible`,
-`recent`, `recent-unwrapped`, `detection`; kamiroh asks for 200 lines at the
-default and has never passed one. M1 recorded `DEFAULT_LINES = 200` returning the
-splash screen as a heuristic problem. It is not only that — it is a request the
-runtime refuses whenever the answer would be interesting.
+in its own error text. And the shape of the mistake is better than "nobody set
+it": M1 *did* pass one — `recent`, with a comment giving the reason, *"what the
+agent produced, not what happens to fit on the screen right now"*. That
+reasoning is right, and it is right about the case where the agent has stopped.
+It walked into a constraint nobody knew existed: `recent` is the source Herdr
+cannot serve while an agent is working.
 
 **2. `Shutdown` not reaching the agent is now demonstrated, with timestamps.**
 

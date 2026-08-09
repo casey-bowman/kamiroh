@@ -155,15 +155,21 @@ impl Client {
     }
 
     /// Reads the last `lines` of what a Herdr-managed agent has produced.
-    pub async fn read_agent(&self, target: &str, lines: u32) -> Result<String, ClientError> {
+    pub async fn read_agent(
+        &self,
+        target: &str,
+        source: ReadSource,
+        lines: u32,
+    ) -> Result<String, ClientError> {
         let result = self
             .request(
                 "agent.read",
                 serde_json::json!({
                     "target": target,
-                    // `recent` rather than `visible`: what the agent produced,
-                    // not what happens to fit on the screen right now.
-                    "source": "recent",
+                    "source": source.as_str(),
+                    // A maximum, not a request: with `visible` Herdr returns the
+                    // screen and this only caps it. Checked against herdr 0.8.0,
+                    // which answered a 200-line ask with the 57 lines on screen.
                     "lines": lines,
                     "strip_ansi": true,
                 }),
@@ -243,6 +249,35 @@ impl Client {
     }
 }
 
+/// Which terminal snapshot to ask Herdr for.
+///
+/// **Not a preference — the two are not interchangeable, and the difference is
+/// what a live run found.** `Recent` includes what has scrolled off the screen,
+/// which is what you want from an agent that has finished. But a coding agent
+/// draws on the alternate screen, and Herdr can only capture that history by
+/// scrolling it *while the agent is idle*, so it refuses a `Recent` read of a
+/// working agent with `agent_not_idle`. `Visible` is always available and is the
+/// only thing that can be read mid-task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadSource {
+    /// What the agent produced, including lines that have scrolled away.
+    ///
+    /// Refused while the agent is working.
+    Recent,
+    /// What is on the screen right now. Always available.
+    Visible,
+}
+
+impl ReadSource {
+    /// The spelling Herdr's API uses.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Recent => "recent",
+            Self::Visible => "visible",
+        }
+    }
+}
+
 /// Reads a string field, tolerating anything.
 ///
 /// This is an error path: a client that panics while explaining a failure is
@@ -294,6 +329,22 @@ pub enum ClientError {
     Io(#[from] std::io::Error),
 }
 
+impl ClientError {
+    /// Herdr's error code, when this is a refusal rather than a transport
+    /// failure.
+    ///
+    /// Callers match on the **code**, never on the message: the codes are a
+    /// stable part of the API and are more specific than its documentation
+    /// suggests, while the prose is Herdr's to reword. `pane_not_found` and
+    /// `agent_not_ready` were both read this way before this.
+    pub fn refusal_code(&self) -> Option<&str> {
+        match self {
+            Self::Refused { code, .. } => Some(code),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use std::collections::VecDeque;
@@ -321,12 +372,37 @@ pub(crate) mod tests {
         /// `HerdrAgent::run` is two round trips — `agent.prompt` then
         /// `agent.read` — and they must be able to differ.
         pub(crate) async fn scripted(replies: Vec<String>) -> Self {
+            let queue = Arc::new(Mutex::new(replies.into_iter().collect::<VecDeque<_>>()));
+            Self::answering(move |_request| {
+                let queue = Arc::clone(&queue);
+                Box::pin(async move { queue.lock().await.pop_front() })
+            })
+            .await
+        }
+
+        /// Answers each request by looking at it.
+        ///
+        /// **This is the constructor the read bug needed and did not have.**
+        /// `scripted` hands back canned replies positionally and never reads the
+        /// request, so nine tests passed against an `agent.read` the real daemon
+        /// rejects — it could not express "refuse *this* source and accept that
+        /// one". A fake that cannot disagree with a request cannot catch a
+        /// request being wrong.
+        pub(crate) async fn answering<F>(answer: F) -> Self
+        where
+            F: Fn(
+                    &serde_json::Value,
+                )
+                    -> std::pin::Pin<Box<dyn std::future::Future<Output = Option<String>> + Send>>
+                + Send
+                + Sync
+                + 'static,
+        {
             let dir = tempfile::tempdir().unwrap();
             let path = dir.path().join("herdr.sock");
             let listener = UnixListener::bind(&path).unwrap();
             let seen = Arc::new(Mutex::new(Vec::new()));
             let recorder = Arc::clone(&seen);
-            let queue = Arc::new(Mutex::new(replies.into_iter().collect::<VecDeque<_>>()));
 
             tokio::spawn(async move {
                 loop {
@@ -338,13 +414,10 @@ pub(crate) mod tests {
                     if stream.read_line(&mut line).await.unwrap_or(0) == 0 {
                         continue;
                     }
-                    recorder
-                        .lock()
-                        .await
-                        .push(serde_json::from_str(&line).unwrap());
+                    let request: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    recorder.lock().await.push(request.clone());
 
-                    let next = queue.lock().await.pop_front();
-                    if let Some(mut response) = next {
+                    if let Some(mut response) = answer(&request).await {
                         response.push('\n');
                         let _ = stream.get_mut().write_all(response.as_bytes()).await;
                     }

@@ -634,6 +634,22 @@ inferring state from terminal output would mean a parser per kind, which is
 exactly what agent-agnostic forbids. So the accuracy of `Blocked` is Herdr's to
 own, and kamiroh's job is not to make it worse.
 
+- **The read source is chosen by the agent's state, and falls back.** Herdr
+  offers `recent` — including what has scrolled away — and `visible`, the
+  rendered screen. **`recent` is refused while an agent is working**
+  (`agent_not_idle`): a coding agent draws on the alternate screen, whose
+  history Herdr can only capture by scrolling it while idle. So a working agent
+  is read `visible` and a settled one `recent`, *and* a refused `recent` retries
+  as `visible`. Choosing avoids a round trip that would always fail; the retry
+  covers what choosing cannot, since the settled state was observed a moment ago
+  and an agent moves on its own. A refusal with any other code is still a
+  failure — falling back on all of them would turn a broken target into a
+  plausible answer.
+- **A `Partial{Busy}` therefore carries a weaker answer than a finished run.**
+  The screen mid-task may be a spinner and a half-drawn diff rather than
+  anything the agent has "said". That is the honest trade: the alternative,
+  which is what happened before, was the whole prompt failing.
+
 **Two limits, stated rather than hidden.** `agent.read` returns the last N lines
 of a pane, and a terminal has no marker for "this is the answer to that prompt"
 — so what counts as output is a heuristic and may include the prompt's own echo.

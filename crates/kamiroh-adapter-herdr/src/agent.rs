@@ -6,7 +6,7 @@
 //! ```text
 //! Agent::run(prompt)
 //!   -> agent.prompt {target, text, wait: {until: [idle, blocked, done], timeout_ms}}
-//!   -> agent.read   {target, source: "recent", lines}
+//!   -> agent.read   {target, source: recent | visible, lines}
 //!   -> AgentOutcome {output, status}
 //! ```
 //!
@@ -36,6 +36,15 @@
 //! has no marker for "this is the answer to that prompt", so this is a
 //! heuristic and openly one: it may include the prompt's own echo, or earlier
 //! output if the agent said little.
+//!
+//! **And which heuristic depends on what the agent was doing**, because Herdr
+//! offers two snapshots and only one of them is available mid-task. A finished
+//! agent is read `recent`, which includes lines that have scrolled away. An
+//! agent still working can only be read `visible` — the rendered screen — so a
+//! [`still_working`](AgentOutcome::still_working) outcome may carry a spinner
+//! and a half-drawn diff rather than anything the agent has "said". That is a
+//! weaker answer than the finished case, and it is the honest one: the
+//! alternative was the run failing outright, which is what it did before.
 
 use std::time::Duration;
 
@@ -43,7 +52,7 @@ use async_trait::async_trait;
 use kamiroh_domain::Payload;
 use kamiroh_ports::{Agent, AgentError, AgentOutcome};
 
-use crate::client::{Client, ClientError};
+use crate::client::{Client, ClientError, ReadSource};
 use crate::pane::PaneAgentState;
 
 /// How long to wait for an agent before answering with what it has so far.
@@ -96,7 +105,49 @@ impl HerdrAgent {
     pub fn target(&self) -> &str {
         &self.target
     }
+
+    /// Reads the agent's output, asking for the snapshot its state allows.
+    ///
+    /// **Both halves are load-bearing, and they cover different things.**
+    /// Choosing by state avoids a wasted round trip in the common case — an
+    /// agent that is still working can only be read `Visible`, and asking
+    /// `Recent` first would always be refused. The retry covers what choosing
+    /// cannot: `settled` is a moment-old observation of something that moves on
+    /// its own, so an agent that was idle when it was measured may be working by
+    /// the time this read arrives. It is also what makes the `Blocked` case
+    /// safe without an assumption — a blocked agent is not working, so it is
+    /// asked for `Recent`, and if Herdr will not scroll a dialog either then the
+    /// retry answers instead of the run failing.
+    async fn read_output(&self, settled: PaneAgentState) -> Result<String, ClientError> {
+        let source = match settled {
+            // Nothing is going to be scrolled while it is still going.
+            PaneAgentState::Working | PaneAgentState::Unknown => ReadSource::Visible,
+            PaneAgentState::Idle | PaneAgentState::Blocked | PaneAgentState::Done => {
+                ReadSource::Recent
+            }
+        };
+
+        match self
+            .client
+            .read_agent(&self.target, source, self.lines)
+            .await
+        {
+            Err(error)
+                if source == ReadSource::Recent && error.refusal_code() == Some(AGENT_NOT_IDLE) =>
+            {
+                self.client
+                    .read_agent(&self.target, ReadSource::Visible, self.lines)
+                    .await
+            }
+            other => other,
+        }
+    }
 }
+
+/// Herdr's code for "I cannot capture scrollback while this agent is working".
+///
+/// The code, never the message: see [`ClientError::refusal_code`].
+const AGENT_NOT_IDLE: &str = "agent_not_idle";
 
 #[async_trait]
 impl Agent for HerdrAgent {
@@ -132,12 +183,7 @@ impl Agent for HerdrAgent {
             .await
             .map_err(unavailable)?;
 
-        let output = self
-            .client
-            .read_agent(&self.target, self.lines)
-            .await
-            .map_err(unavailable)?;
-        let output = Payload::text(output);
+        let output = Payload::text(self.read_output(settled).await.map_err(unavailable)?);
 
         Ok(match settled {
             // Done and idle both mean the agent has nothing outstanding.
@@ -212,6 +258,141 @@ mod tests {
 
     fn read(text: &str) -> String {
         format!(r#"{{"id":"2","result":{{"read":{{"text":"{text}"}}}}}}"#)
+    }
+
+    fn refused(code: &str, message: &str) -> String {
+        format!(r#"{{"id":"2","error":{{"code":"{code}","message":"{message}"}}}}"#)
+    }
+
+    /// A Herdr that settles a prompt at `settled` and answers `agent.read`
+    /// according to the **source it was asked for**.
+    ///
+    /// The positional `scripted` fake cannot express that, which is why it
+    /// agreed with a read the real daemon refuses.
+    async fn herdr_reading(settled: &'static str, on_read: fn(&str) -> String) -> FakeHerdr {
+        FakeHerdr::answering(move |request| {
+            let method = request["method"].as_str().unwrap_or_default().to_owned();
+            let source = request["params"]["source"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            Box::pin(async move {
+                Some(match method.as_str() {
+                    "agent.prompt" => prompted(settled),
+                    "agent.read" => on_read(&source),
+                    _ => r#"{"id":"x","result":{}}"#.to_owned(),
+                })
+            })
+        })
+        .await
+    }
+
+    /// Every source an `agent.read` asked for, in order.
+    async fn read_sources(herdr: &FakeHerdr) -> Vec<String> {
+        herdr
+            .requests()
+            .await
+            .iter()
+            .filter(|request| request["method"] == "agent.read")
+            .map(|request| {
+                request["params"]["source"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned()
+            })
+            .collect()
+    }
+
+    /// How the real daemon behaves: scrollback is refused while it is working.
+    fn like_a_real_pane(source: &str) -> String {
+        if source == "recent" {
+            refused(
+                "agent_not_idle",
+                "cannot read 200 lines while w1:p1 is working",
+            )
+        } else {
+            read("step 3 of 9")
+        }
+    }
+
+    /// **The bug the P2 usage run found, as a test.**
+    ///
+    /// Against a real agent every prompt to a working one failed outright:
+    /// kamiroh asked for `recent`, Herdr refused with `agent_not_idle`, and the
+    /// caller got an `AgentError` where M1's design promised `Partial{Busy}`.
+    /// Nine tests passed because the fake answered a read the daemon rejects.
+    ///
+    /// Mutation-tested, and *how* it fails is the point. Pinning `read_output`'s
+    /// source back to `Recent` fails this test — on the source assertion, with
+    /// `["recent", "visible"]`, not on the `unwrap`. The retry rescues the
+    /// outcome, so the mutation costs a wasted round trip on every prompt to a
+    /// working agent rather than breaking it. Only asserting *which* source was
+    /// asked for catches that; asserting the outcome alone would not.
+    #[tokio::test]
+    async fn a_working_agent_is_read_from_the_screen_rather_than_the_run_failing() {
+        let herdr = herdr_reading("working", like_a_real_pane).await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        let outcome = agent.run(Payload::text("big job")).await.unwrap();
+
+        assert_eq!(outcome.status, AgentStatus::Busy);
+        assert_eq!(outcome.output.as_text(), Some("step 3 of 9"));
+        assert_eq!(
+            read_sources(&herdr).await,
+            ["visible"],
+            "a working agent is read from the screen, and asked exactly once"
+        );
+    }
+
+    /// The other half: when scrollback *is* available, it is what we want.
+    /// `visible` would silently truncate a long answer to the screen.
+    #[tokio::test]
+    async fn a_finished_agent_is_read_from_scrollback() {
+        let herdr = herdr_reading("done", |_| read("all done")).await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        let outcome = agent.run(Payload::text("build it")).await.unwrap();
+
+        assert_eq!(outcome.output.as_text(), Some("all done"));
+        assert_eq!(read_sources(&herdr).await, ["recent"]);
+    }
+
+    /// Choosing by state is not enough on its own: the state was observed a
+    /// moment ago and the agent moves on its own, so an agent that had settled
+    /// can be working again by the time the read lands. It falls back rather
+    /// than failing — and this also covers a `blocked` agent, should Herdr
+    /// decline to scroll a dialog.
+    #[tokio::test]
+    async fn scrollback_refused_after_the_agent_settled_falls_back_to_the_screen() {
+        let herdr = herdr_reading("idle", like_a_real_pane).await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        let outcome = agent.run(Payload::text("quick one")).await.unwrap();
+
+        assert_eq!(outcome.status, AgentStatus::Idle, "still a finished run");
+        assert_eq!(outcome.output.as_text(), Some("step 3 of 9"));
+        assert_eq!(
+            read_sources(&herdr).await,
+            ["recent", "visible"],
+            "asked for scrollback, refused, then took the screen"
+        );
+    }
+
+    /// A refusal that is *not* about scrolling stays a failure. Falling back on
+    /// any refusal would turn a broken target into a plausible-looking answer.
+    #[tokio::test]
+    async fn a_refusal_that_is_not_about_scrolling_is_not_retried() {
+        let herdr = herdr_reading("idle", |_| refused("pane_not_found", "no such pane")).await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        let error = agent.run(Payload::text("hello")).await.unwrap_err();
+
+        assert!(matches!(error, AgentError::Unavailable { .. }), "{error:?}");
+        assert_eq!(
+            read_sources(&herdr).await,
+            ["recent"],
+            "asked once, no retry"
+        );
     }
 
     #[tokio::test]
