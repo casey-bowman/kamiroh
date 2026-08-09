@@ -541,9 +541,24 @@ The candidates, most valuable first as they look from here:
    consultations*: the F2 enumeration argument, malformed-is-fatal in I, `Agent`
    as an adapter trait, the bounded-mailbox reasoning in G.
 
-Worth a fresh planning pass rather than inventing K, L, M. The lettered slices
-worked because they came from one plan written up front; picking the next four
-off a list is not the same thing.
+**That pass is done: [kamiroh-phase-2.md](./kamiroh-phase-2.md).** It supersedes
+the list above, which was a leftovers pile rather than a plan. Two findings
+changed the ordering:
+
+- **The README's headline case does not work.** `bind_endpoint` uses Iroh's
+  `Minimal` preset — no relays, no discovery — and `KAMIROH_PEER` needs a
+  routable `host:port`. "Home ↔ cafe, behind NAT" has no such address. Every
+  demo so far has used `127.0.0.1`, which hid it.
+- **The missing agent runtime is already installed.** Herdr's socket API has
+  `agent.start`, `agent.prompt`, `agent.wait` and `agent.read`. `Agent::run`
+  maps onto them, so a kamiroh agent is *an agent Herdr is managing* — which is
+  what the README always described, and why `Agent` went in the adapter rather
+  than in the ports crate.
+
+Phase 2 is four outcome-shaped milestones: a real agent, reachability, several
+agents, then the accumulated debt. Its open question — what `blocked` means when
+an agent is waiting for a human — is the one that decides whether Phase 2 has to
+touch `kamiroh-domain`, which nothing since slice B has.
 
 ## Known nits (not worth their own commit)
 
