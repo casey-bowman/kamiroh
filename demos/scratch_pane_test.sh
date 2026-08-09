@@ -8,7 +8,7 @@ SOCK="${HERDR_SOCKET_PATH:-$HOME/.config/herdr/herdr.sock}"
 DEMO="${TMPDIR:-/tmp}/kamiroh-scratch"; rm -rf "$DEMO"; mkdir -p "$DEMO"
 BIN=./target/debug/kamiroh
 
-nap() { perl -e 'select(undef, undef, undef, shift)' "$1"; }
+nap() { sleep "$1"; }
 
 # One request per connection — that is how Herdr answers.
 call() { printf '%s\n' "$1" | nc -U "$SOCK" 2>/dev/null; }

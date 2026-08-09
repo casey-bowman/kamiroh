@@ -21,7 +21,7 @@ PIDS=()
 cleanup() { for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT
 
-nap() { perl -e 'select(undef, undef, undef, shift)' "$1"; }
+nap() { sleep "$1"; }
 wait_for() { for _ in $(seq 1 "${3:-100}"); do grep -q "$2" "$1" 2>/dev/null && return 0; nap 0.5; done; return 1; }
 endpoint_id() { grep '^endpoint id:' "$1" | head -1 | awk '{print $3}'; }
 

@@ -9,6 +9,27 @@ Not tests. `cargo test` covers what can be checked in-process; these cover what
 only real processes, real sockets and a real Herdr can show. Nothing runs them
 automatically.
 
+## Requirements
+
+Plain `bash` — no version-4 features, so these run on macOS's bash 3.2 and on
+Linux alike. Beyond a built binary:
+
+| | for | note |
+|---|---|---|
+| `jq` | every script | not installed by default anywhere; `brew install jq` / `apt install jq` |
+| `nc` with `-U` | the Herdr ones only | **the one real portability trap** — see below |
+
+`nc -U` (connect to a Unix socket) is how the Herdr scripts speak to its API.
+macOS ships a BSD `nc` that supports it. On Linux it depends which netcat is
+installed: `netcat-openbsd` supports `-U`, **`netcat-traditional` does not**, and
+nmap's `ncat` spells it `--unixsock`. If `two_node_demo.sh` works but
+`kind_live.sh` cannot reach Herdr, that is why: `apt install netcat-openbsd`.
+
+Nothing here needs Perl or Python. An earlier version used
+`perl -e 'select(...)'` in place of `sleep`, purely because the environment they
+were written in blocked a foreground `sleep` — a quirk of that harness, not of
+the task, and not something to inflict on a reader.
+
 ```bash
 cargo build --workspace
 ./demos/two_node_demo.sh

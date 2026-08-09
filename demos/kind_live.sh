@@ -13,7 +13,7 @@ BIN=./target/debug/kamiroh
 KIND="${1:-claude}"
 AGENT_NAME="kamiroh-$KIND"
 
-nap() { perl -e 'select(undef, undef, undef, shift)' "$1"; }
+nap() { sleep "$1"; }
 call() { printf '%s\n' "$1" | nc -U "$SOCK" 2>/dev/null; }
 
 SCRATCH=""

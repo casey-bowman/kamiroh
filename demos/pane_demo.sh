@@ -18,7 +18,7 @@ PIDS=()
 cleanup() { for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT
 
-nap() { perl -e 'select(undef, undef, undef, shift)' "$1"; }
+nap() { sleep "$1"; }
 
 wait_for() { # file, marker
   for _ in $(seq 1 100); do

@@ -19,7 +19,7 @@ cleanup() { for p in "${PIDS[@]:-}"; do kill "$p" 2>/dev/null; done; }
 trap cleanup EXIT
 
 # Sub-second pause without `sleep`.
-nap() { perl -e 'select(undef, undef, undef, shift)' "$1"; }
+nap() { sleep "$1"; }
 
 # Wait up to ~10s for a marker to appear in a file, failing loudly if the
 # process died instead (which is what an unreadable log usually means).

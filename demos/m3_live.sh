@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 D="${TMPDIR:-/tmp}/kamiroh-m3"; rm -rf "$D"; mkdir -p "$D"
 BIN=./target/debug/kamiroh
 unset HERDR_PANE_ID HERDR_ENV HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID
-nap() { perl -e 'select(undef,undef,undef,shift)' "$1"; }
+nap() { sleep "$1"; }
 wait_for() { for _ in $(seq 1 "${3:-100}"); do grep -q "$2" "$1" 2>/dev/null && return 0; nap 0.5; done; return 1; }
 eid() { grep '^endpoint id:' "$1" | head -1 | awk '{print $3}'; }
 port() { grep '^listening:' "$1" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' | head -1 | cut -d: -f2; }

@@ -14,7 +14,7 @@ DEMO="${TMPDIR:-/tmp}/kamiroh-unblock-$STAMP"
 mkdir -p "$DEMO/work"
 BIN=./target/debug/kamiroh
 
-nap() { perl -e 'select(undef, undef, undef, shift)' "$1"; }
+nap() { sleep "$1"; }
 call() { printf '%s\n' "$1" | nc -U "$SOCK" 2>/dev/null; }
 state() { call "{\"id\":\"s\",\"method\":\"agent.get\",\"params\":{\"target\":\"$1\"}}" | jq -r '.result.agent.agent_status // "?"'; }
 screen() { call "{\"id\":\"r\",\"method\":\"agent.read\",\"params\":{\"target\":\"$1\",\"source\":\"recent\",\"lines\":30,\"strip_ansi\":true}}" | jq -r '.result.read.text // ""'; }

@@ -16,7 +16,7 @@ unset HERDR_PANE_ID HERDR_ENV HERDR_SOCKET_PATH HERDR_WORKSPACE_ID HERDR_TAB_ID
 KEY="$DEMO/node.key"
 ID=cb1b755a7d4d6330665717449a886d58270b289746135c33d531038846dc9141
 
-nap() { perl -e 'select(undef, undef, undef, shift)' "$1"; }
+nap() { sleep "$1"; }
 
 # Starts the node, prints its `allowing:` line, then stops it.
 starts_with() { # label, env assignments applied by caller
