@@ -1,15 +1,21 @@
 //! Iroh adapter for kamiroh.
 //!
-//! Slice F1 covers **identity only**: turning the node secret that
-//! `kamiroh-adapter-fs` persists into the public [`EndpointId`] that peers use to
-//! address this node. The peer transport arrives in F2.
+//! Two halves of one protocol:
+//!
+//! - [`IrohTransport`] implements the driven `Transport` port — this node
+//!   sending control messages to actors on other nodes.
+//! - [`front::serve`] is the driving side — inbound connections calling
+//!   `ControlApi` with the peer Iroh authenticated.
+//!
+//! [`endpoint_id_for`] ties them to key custody: a node's public identity is the
+//! ed25519 public key of the secret `kamiroh-adapter-fs` persists.
 //!
 //! # The conversion boundary
 //!
 //! This crate is the one place where an Iroh type meets a kamiroh type. Iroh's
 //! `EndpointId` is an ed25519 public key; kamiroh's is an opaque 32-byte value
 //! that the domain owns. They have the same bytes and deliberately different
-//! types — the domain must not learn what an `iroh_base::PublicKey` is, or the
+//! types — the domain must not learn what an `iroh::PublicKey` is, or the
 //! dependency rule is broken and swapping the transport later means rewriting
 //! the domain. Everything above this crate speaks
 //! [`kamiroh_domain::EndpointId`].
@@ -17,8 +23,22 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
-use iroh_base::SecretKey;
+pub mod codec;
+pub mod front;
+pub mod transport;
+
+pub use iroh::EndpointAddr;
+pub use transport::{IrohTransport, peer_address};
+
+use iroh::endpoint::presets::Minimal;
+use iroh::{Endpoint, SecretKey};
 use kamiroh_domain::{EndpointId, NodeSecret};
+
+/// ALPN identifying the kamiroh control protocol.
+///
+/// Versioned in the name: a future incompatible protocol takes a new ALPN, so
+/// mismatched peers fail to negotiate rather than misinterpreting each other.
+pub const ALPN: &[u8] = b"kamiroh/control/0";
 
 /// Derives this node's public endpoint id from its secret.
 ///
@@ -27,12 +47,26 @@ use kamiroh_domain::{EndpointId, NodeSecret};
 /// peer will see, without kamiroh reimplementing the derivation.
 ///
 /// Deterministic: the same secret always yields the same id, which is what makes
-/// a node's identity stable across restarts now that slice E persists the
+/// a node's identity stable across restarts now that the key store persists the
 /// secret.
 pub fn endpoint_id_for(secret: &NodeSecret) -> EndpointId {
     // Infallible: any 32 bytes are a valid ed25519 secret scalar.
     let key = SecretKey::from_bytes(secret.expose_bytes());
     EndpointId::from_bytes(*key.public().as_bytes())
+}
+
+/// Binds an Iroh endpoint for this node, listening for the kamiroh ALPN.
+///
+/// Uses the [`Minimal`] preset: it sets the mandatory TLS crypto provider and
+/// nothing else — no relays, no discovery. kamiroh addresses peers explicitly
+/// (see [`IrohTransport`]), and relays are a NAT aid rather than a control path,
+/// so bringing them in is a later, additive decision.
+pub async fn bind_endpoint(secret: &NodeSecret) -> Result<Endpoint, iroh::endpoint::BindError> {
+    Endpoint::builder(Minimal)
+        .secret_key(SecretKey::from_bytes(secret.expose_bytes()))
+        .alpns(vec![ALPN.to_vec()])
+        .bind()
+        .await
 }
 
 #[cfg(test)]

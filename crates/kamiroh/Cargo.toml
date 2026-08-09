@@ -21,4 +21,4 @@ kamiroh-app.workspace = true
 kamiroh-adapter-memory.workspace = true
 kamiroh-adapter-fs.workspace = true
 kamiroh-adapter-iroh.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["signal"] }
