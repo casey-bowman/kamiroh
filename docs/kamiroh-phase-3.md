@@ -139,6 +139,40 @@ Only worth doing after P2. The README currently promises lifecycle management
 kamiroh does not perform; publishing before P1 would ship that mismatch to
 strangers.
 
+**Before publishing — a checklist, because each item is invisible until it is
+too late:**
+
+1. **The logo will not render on crates.io.** `README.md` uses a relative
+   `<img src="kamiroh.jpg">`. GitHub resolves that; crates.io does not, because
+   it renders the README outside the repository. It needs an absolute URL, and
+   plain markdown rather than the `<p align="center">` wrapper, since crates.io
+   sanitises HTML:
+
+   ```markdown
+   ![kamiroh](https://raw.githubusercontent.com/<owner>/kamiroh/<ref>/kamiroh.jpg)
+   ```
+
+   **Pin `<ref>` to a tag, not `master`.** A published version's README is
+   immutable, but an image URL pointing at a branch is not — the logo of
+   version 0.1.0 would change the next time `master` did.
+
+2. **`<owner>` is genuinely unclear, and must be settled first.** The manifest
+   and the remote disagree:
+
+   | | |
+   |---|---|
+   | `Cargo.toml` `repository` | `https://github.com/casey-bowman/kamiroh` |
+   | `git remote origin` | `git@github.com:kamiroh-workshop/kamiroh.git` |
+
+   One of those is wrong. Whichever is the public home decides both the raw
+   image URL and what the crates.io "Repository" link points at — and a
+   published crate with a repository link to the wrong place is not fixable
+   without a new version.
+
+3. **The README's lifecycle claim.** It promises starting and managing agents;
+   kamiroh attaches and cannot stop one (§2.2). Fix in P1, or reword before
+   strangers rely on it.
+
 ---
 
 ## 4. What this deliberately does not do
