@@ -33,7 +33,7 @@ iroh-base`), `kamiroh-domain` still has zero dependencies, and `kamiroh-app`'s
 tree contains no iroh crate. Beware `grep -i iroh` here — it matches "kam*iroh*";
 check the reverse-dependency tree instead.
 
-**Slice E — `kamiroh-adapter-fs` key custody** (`5eb40b5`)
+**Slice E — `kamiroh-adapter-fs` key custody**
 
 - `FileKeyStore`: OS entropy via `getrandom`, stored as hex at
   `$XDG_CONFIG_HOME/kamiroh/node.key`, overridable with `KAMIROH_KEY_FILE`.
@@ -59,7 +59,7 @@ well as the pid, or threads in one process stage onto a single path and delete
 each other's candidate; and the temp file is removed by a scope guard on every
 exit path, since a stranded one is a live secret loose in the key directory.
 
-**Slice A — workspace + crate graph + ARCHITECTURE.md** (`75feee2`)
+**Slice A — workspace + crate graph + ARCHITECTURE.md**
 
 - Root `Cargo.toml` converted from a single package to a workspace
   (`resolver = "3"`, `[workspace.package]`, `[workspace.dependencies]`). The old
@@ -68,7 +68,7 @@ exit path, since a stranded one is a live secret loose in the key directory.
   `kamiroh-adapter-memory`, `kamiroh` (bin). crates.io metadata moved to the bin.
 - `docs/ARCHITECTURE.md` written against the code as built.
 
-**Slice B — port traits** (`75feee2`)
+**Slice B — port traits**
 
 - Driving: `ControlApi` with an opaque `Origin` (`remote()` / `local_front()`).
 - Driven: `Transport`, `Allowlist`, `KeyStore`, `AgentController`.
@@ -209,5 +209,9 @@ unit-tested but a real two-node connection will need a run outside it.
   struct fields — break the build rather than nagging.
 - Commits use conventional-commit subjects, one per slice, on `master` — the
   working method is explicitly "one session on the main checkout".
+- **Slice headings carry no commit hash.** This file is written before the commit
+  exists, so any hash in it is either stale or missing — and a file where some
+  slices have one and others don't reads as "that slice isn't committed yet".
+  `git log --oneline -- docs/LOOP.md` is the mapping.
 - `KAMIROH_KEY_FILE` overrides the key path. Use it when running the binary
   inside a sandbox, or to run several nodes on one machine.
