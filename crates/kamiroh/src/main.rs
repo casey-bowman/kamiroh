@@ -24,12 +24,14 @@
 //! [`kamiroh_adapter_fs::allowlist`].
 
 use std::error::Error;
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use kamiroh_adapter_fs::{FileAllowlist, FileKeyStore};
+use kamiroh_adapter_herdr::{Link, LocalLink, RemoteLink, console};
 use kamiroh_adapter_iroh::{
     EndpointAddr, IrohTransport, bind_endpoint, endpoint_id_for, front, peer_address,
 };
@@ -111,9 +113,44 @@ async fn run() -> Result<(), Box<dyn Error>> {
 
     local_smoke(control.as_ref(), &agent).await?;
 
-    if let Some((peer_id, _)) = peer {
-        greet(transport.as_ref(), peer_id, &agent).await;
+    if let Some((peer_id, _)) = &peer {
+        greet(transport.as_ref(), *peer_id, &agent).await;
     }
+
+    // --- The pane console ---------------------------------------------------
+    //
+    // Bound to one agent, because a Herdr pane means one agent to the person
+    // using it. Which *node* that agent is on is the link's business, not the
+    // console's: with a peer configured the pane drives the agent over there,
+    // which is the case worth having — a pane on a laptop, an agent that has
+    // been running at home for a week.
+    let link: Arc<dyn Link> = match &peer {
+        Some((peer_id, _)) => Arc::new(RemoteLink::new(
+            Arc::clone(&transport),
+            PeerAddress::new(*peer_id, agent.clone()),
+        )),
+        None => Arc::new(LocalLink::new(Arc::clone(&control), agent.clone())),
+    };
+    println!("pane:        {}", link.describe());
+
+    // Spawned, and its ending is not the node's ending. A node serving agents
+    // for other peers has nobody at its pane and may have a closed stdin from
+    // the moment it starts; that must not shut it down.
+    // A prompt only when someone is there to see it. Piped input echoes
+    // nothing, so a prompt per line would stack on one line rather than
+    // marking where a person is meant to type.
+    let prompt = if std::io::stdin().is_terminal() {
+        "> "
+    } else {
+        ""
+    };
+
+    tokio::spawn(async move {
+        let input = tokio::io::BufReader::new(tokio::io::stdin());
+        if let Err(error) = console::serve(input, tokio::io::stdout(), link, prompt).await {
+            eprintln!("kamiroh: pane console stopped: {error}");
+        }
+    });
 
     println!("\nserving — press Ctrl-C to stop");
     tokio::signal::ctrl_c().await?;

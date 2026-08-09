@@ -1,0 +1,21 @@
+[package]
+name = "kamiroh-adapter-herdr"
+description = "Herdr-pane console: drive one agent, local or remote, from a terminal pane"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+# `io-util` for the line reader; `io-std` so the composition root can hand this
+# the real stdin. Nothing here knows about Herdr's socket API — a pane is a
+# terminal, and this crate only needs the two ends of it.
+tokio = { workspace = true, features = ["io-util", "io-std"] }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util"] }

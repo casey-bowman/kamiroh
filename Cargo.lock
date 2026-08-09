@@ -1601,6 +1601,7 @@ name = "kamiroh"
 version = "0.1.0"
 dependencies = [
  "kamiroh-adapter-fs",
+ "kamiroh-adapter-herdr",
  "kamiroh-adapter-iroh",
  "kamiroh-adapter-kameo",
  "kamiroh-adapter-memory",
@@ -1619,6 +1620,17 @@ dependencies = [
  "kamiroh-domain",
  "kamiroh-ports",
  "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+]
+
+[[package]]
+name = "kamiroh-adapter-herdr"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "kamiroh-domain",
+ "kamiroh-ports",
  "thiserror 2.0.18",
  "tokio",
 ]

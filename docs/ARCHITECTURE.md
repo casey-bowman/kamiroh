@@ -20,7 +20,8 @@ knows about ports; ports know about the domain; the domain knows about nothing.
       └───────────────────┬─────────────────────────┘
                           │ wires
       ┌───────────────────▼─────────────────────────┐
-      │  adapters   (kamiroh-adapter-memory today)  │
+      │  adapters   fs · iroh · kameo · herdr       │
+      │             memory (test doubles)           │
       └───────────────────┬─────────────────────────┘
                           │ implement / call
       ┌───────────────────▼─────────────────────────┐
@@ -61,6 +62,7 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-adapter-fs` | Node key custody and the allowlist, on disk | domain, ports, `async-trait`, `getrandom`, `thiserror` |
 | `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport and inbound front (F2) | domain, ports, `iroh-base`, `iroh` |
 | `kamiroh-adapter-kameo` | One controller actor per agent | domain, ports, `async-trait`, `tokio`, `kameo` |
+| `kamiroh-adapter-herdr` | The pane console: one pane, one agent | domain, ports, `async-trait`, `thiserror`, `tokio` |
 | `kamiroh` | Composition root (binary) | all of the above, `tokio` |
 
 `kamiroh-adapter-iroh` depends on `iroh-base` with `default-features = false,
@@ -75,10 +77,18 @@ reading the spec. F2 adds `iroh` proper.
 The build plan's tree also lists `kamiroh-adapter-iroh`, `-kameo`, and `-herdr`.
 None was created up front. An empty crate that exists only to be `cargo check`ed
 proves nothing and gets rewritten when the real adapter lands, so each arrives
-with its slice — `-fs` in E, `-iroh` in F, `-kameo` in G. Only `-herdr` (J) is
-still deferred. `kamiroh-adapter-memory` covered the first deliverable's "no-op
-or in-memory adapters so the bin compiles" in one crate, and remains the test
-double set.
+with its slice — `-fs` in E, `-iroh` in F, `-kameo` in G, `-herdr` in J. All
+four now exist, each arriving with real behaviour rather than as a stub.
+`kamiroh-adapter-memory` covered the first deliverable's "no-op or in-memory
+adapters so the bin compiles" in one crate, and remains the test double set.
+
+`kamiroh-adapter-herdr` names Herdr and depends on nothing of it. A pane is a
+terminal, so the console takes an `AsyncBufRead` and an `AsyncWrite` and is
+tested with a string and a `Vec<u8>`. Herdr's socket API is real — newline
+JSON on `$HERDR_SOCKET_PATH`, with `pane.report_agent` for pushing agent state
+into the pane list — and using it is slice J2, which is outbound and needs a
+JSON client. Keeping it out is what keeps this crate testable without Herdr
+installed.
 
 `kamiroh-adapter-kameo` takes `kameo` with `default-features = false`. Its
 `remote` feature pulls libp2p, and a second peer-to-peer stack in the tree would
@@ -98,9 +108,10 @@ fronts" work.
 |---|---|
 | `ControlApi` | `deliver(origin, agent, message) -> ControlReply` |
 
-Implemented by `kamiroh-app`; called by every front. The Iroh adapter and the
-optional Herdr adapter will hold the same `Arc<dyn ControlApi>`, which is exactly
-how both reach one controller actor.
+Implemented by `kamiroh-app`; called by every front. The Iroh front and the
+Herdr pane console hold the same `Arc<dyn ControlApi>`, which is how both reach
+one controller actor. Since J1 that is demonstrated rather than promised: the
+composition root clones one handle into both.
 
 `Origin` carries the trust decision as a type. It is **opaque**: its two cases
 are reachable only through named constructors, and the app layer reads it back
@@ -117,8 +128,44 @@ every crate depending on `kamiroh-ports`, putting the Iroh adapter one typo away
 from silently disabling the allowlist for all remote traffic. As a constructor,
 claiming local trust is a deliberate act and `grep -r 'local_front'` lists every
 place in the tree that does — the same audit affordance as
-`NodeSecret::expose_bytes`. Any transport adapter appearing in that grep is a
-bug.
+`NodeSecret::expose_bytes`.
+
+**The audit rule changed in J1.** It used to be "no adapter may appear in that
+grep", which held while every adapter was a transport. `LocalLink` is the case
+the constructor was written for, so the rule is now:
+
+> Only `kamiroh-adapter-herdr`'s `LocalLink` and the composition root may call
+> `Origin::local_front()`. Any *transport* adapter appearing in that grep is
+> still a bug.
+
+The justification is that a pane is a process on this machine, started by
+whoever owns the node, so it is already inside the boundary the allowlist
+defends. Note that `RemoteLink`, in the same file, does **not** call it — the
+console does not get to vouch for the far end.
+
+### 3a. Fronts and consoles are not the same thing
+
+This document said for a long time that the Herdr adapter would be "a second
+front calling the same `ControlApi`". That is true of half of it, and the half
+it misses is the one users actually want.
+
+- A **front** is inbound. Something arrives, and the adapter calls `ControlApi`
+  to serve *this node's* agents. The Iroh accept loop is a front.
+- A **console** is outbound. A person acts, and the adapter calls `Transport` to
+  drive *another node's* agents. `IrohTransport` is the machinery; the pane is
+  the human end of it.
+
+`kamiroh-adapter-herdr` is both, and the console half is the point: a pane on a
+laptop, an agent that has been running at home for a week. The README always
+said so — "locally or across the network—to drive agents" — but the slice table
+said "front", and a reader following the plan would have built the wrong thing.
+
+The distinction matters beyond naming, because the trust rules differ. A front
+must decide whether to trust what arrived: `Origin::remote(..)` is checked
+against the allowlist, `Origin::local_front()` is not. A console makes no trust
+decision at all — it is the *far end's* allowlist that judges it, which is why
+`RemoteLink` never constructs an `Origin` and why a refusal comes back as a
+`TransportError`, not a `ControlApiError`.
 
 ### Driven ports — the inside calls out
 
@@ -356,7 +403,9 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 | | | `Origin` is built from the connection's authenticated peer; `grep -rn local_front crates/` still shows the composition root as the only caller. |
 | ~~G~~ | `kamiroh-adapter-kameo` | ✅ done — `AgentController`, replacing `EchoController` in the binary |
 | ~~I~~ | `kamiroh-adapter-fs` | ✅ done — `Allowlist` from a file, replacing the list the composition root built from an env var |
-| J | `kamiroh-adapter-herdr` | A second front calling the same `ControlApi` |
+| ~~J1~~ | `kamiroh-adapter-herdr` | ✅ done — the pane console: one pane, one agent, local **or remote** |
+| | | ⚠ The row above used to read "a second front calling the same `ControlApi`", which is half the story. See §3a. |
+| J2 | `kamiroh-adapter-herdr` | Report `AgentStatus` to Herdr via `pane.report_agent` — outbound, not a front |
 
 Each is a constructor swap in `crates/kamiroh/src/main.rs`. No slice above should
 require an app-layer or domain change; if one does, that is the signal to revisit

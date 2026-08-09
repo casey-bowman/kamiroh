@@ -22,4 +22,5 @@ kamiroh-adapter-memory.workspace = true
 kamiroh-adapter-fs.workspace = true
 kamiroh-adapter-iroh.workspace = true
 kamiroh-adapter-kameo.workspace = true
+kamiroh-adapter-herdr.workspace = true
 tokio = { workspace = true, features = ["signal"] }

@@ -17,6 +17,7 @@ kamiroh-adapter-memory = { path = "crates/kamiroh-adapter-memory", version = "0.
 kamiroh-adapter-fs = { path = "crates/kamiroh-adapter-fs", version = "0.1.0" }
 kamiroh-adapter-iroh = { path = "crates/kamiroh-adapter-iroh", version = "0.1.0" }
 kamiroh-adapter-kameo = { path = "crates/kamiroh-adapter-kameo", version = "0.1.0" }
+kamiroh-adapter-herdr = { path = "crates/kamiroh-adapter-herdr", version = "0.1.0" }
 
 async-trait = "0.1"
 thiserror = "2"

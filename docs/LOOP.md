@@ -14,10 +14,66 @@ There is nothing left for H to do; the wiring it describes is
 `crates/kamiroh/src/main.rs` as it stands. Recorded here rather than silently
 skipped.
 
-**Every driven port now has a real adapter.** Only **J** (Herdr, a second front)
-remains of the planned slices.
+**Every driven port has a real adapter, and the lettered slices are done bar
+J2.** A→I complete; J split into J1 (the pane console, done) and J2 (reporting
+agent state into Herdr, next).
 
 ## Done
+
+**Slice J1 — the pane console**
+
+`kamiroh-adapter-herdr`: one pane, one agent, typed at like a chat window. A
+bare line is a prompt; `/status`, `/interrupt`, `/shutdown` carry the other
+three `ControlMessage` verbs, because a local console that could only prompt
+would be strictly weaker than the remote path for no reason.
+
+**The plan's description of J was wrong, and following it would have built the
+wrong thing.** The slice table said "a second front calling the same
+`ControlApi`" — inbound, driving an agent on *this* node. What is actually
+wanted is the opposite direction: sit at a pane on a laptop and drive an agent
+that has been running on the home node for a week. That is not a front at all;
+nothing arrives. It is kamiroh as a *client*, over the `Transport` port.
+
+Both directions are here, behind a `Link` the console cannot see through:
+
+| | port | direction | trust |
+|---|---|---|---|
+| `LocalLink` | `ControlApi` (driving) | inbound — a *front* | `Origin::local_front()` |
+| `RemoteLink` | `Transport` (driven) | outbound — a *console* | the peer's allowlist decides |
+
+`LocalLink` is what finally tests the claim the architecture has made since
+slice A: it holds the same `Arc<dyn ControlApi>` as the Iroh front, so both
+reach one controller actor. Until now there was only ever one front, so the
+claim was untested. ARCHITECTURE.md gained §3a for the front/console
+distinction, since the old wording is what caused the mistake.
+
+**The `local_front` audit rule changed, deliberately.** It was "no adapter may
+appear in `grep -r local_front`", which held while every adapter was a
+transport. `LocalLink` is the case that constructor was written for in slice B.
+The rule is now "only `kamiroh-adapter-herdr`'s `LocalLink` and the composition
+root", and a transport adapter appearing there is still a bug. Note `RemoteLink`
+does **not** call it: a console does not get to vouch for the far end.
+
+Two smaller decisions worth keeping:
+
+- **Ending the console does not end the node.** A node serving agents for peers
+  has nobody at its pane and may have a closed stdin from the moment it starts.
+  The console is spawned, and EOF or `/quit` just ends that task. This is what
+  keeps the two-node demo working unchanged.
+- **The prompt string is the caller's choice.** A terminal echoes the newline
+  when someone presses Enter, so `> ` lands on a fresh line; piped input echoes
+  nothing, so every blank line stacked another prompt on the same one — visible
+  as `> > unknown command` in the first demo run. The composition root passes
+  `"> "` only when `stdin().is_terminal()`.
+
+Nothing in the crate knows about Herdr. A pane is a terminal, so `serve` takes
+an `AsyncBufRead` and an `AsyncWrite` and is tested with a string and a
+`Vec<u8>`.
+
+Verified by 14 unit tests and a two-process run: a pane on node B sends a prompt
+to node A's agent over Iroh and gets the echo back, `/status` returns `idle`
+from A's Kameo actor, and once A empties its allowlist the same pane shows
+`refused the connection` and carries on.
 
 **Slice I — the allowlist file**
 
@@ -221,12 +277,14 @@ exit path, since a stranded one is a live secret loose in the key directory.
 ```
 cargo fmt --all --check                        # clean
 cargo clippy --workspace --all-targets -- -D warnings   # zero warnings
-cargo test  --workspace                        # 117 passed, 0 failed (as of I)
+cargo test  --workspace                        # 132 passed, 0 failed (as of J1)
 cargo tree  -p kamiroh-domain -e normal        # no dependencies at all
 cargo tree  -p kamiroh-ports  -e normal        # kamiroh-domain + async-trait + thiserror only
 cargo tree  -i kameo -e normal                 # exactly one consumer: kamiroh-adapter-kameo
 cargo tree  -i iroh-base -e normal             # exactly one consumer: kamiroh-adapter-iroh
-grep -rn local_front crates/ --include='*.rs'  # called only from the composition root
+# Since J1: the composition root, kamiroh-app's tests, and LocalLink only.
+# A *transport* adapter appearing here is a bug.
+grep -rn local_front crates/ --include='*.rs'
 
 # Needs sockets, so it runs outside the sandbox:
 cargo test -p kamiroh-adapter-iroh --test two_nodes
@@ -271,6 +329,12 @@ fooled this way.
 | `KAMIROH_ALLOW` | Kept as an outright override | Explicit beats ambient, and the two-process demo and multi-node local testing depend on it. |
 | Reload | `reload()` now, trigger later | The atomic swap is hard to retrofit; a signal or watch is not. A failed reload retains and reports rather than choosing a risk for the caller. |
 | `main`'s return | `ExitCode`, printing `Display` | A `Result`-returning `main` prints `Debug`, so every refusal-to-start message was a struct dump. |
+| Split J | J1 console, J2 Herdr reporting | Inbound console and outbound status reporting are different kinds of thing; J1 alone meets the plan's bar. |
+| J's real shape | A console, not only a front | The wanted case is driving a *remote* agent from a local pane. The plan said "front", which is the other direction. |
+| Pane input syntax | Bare line = prompt; slash commands for the rest | One pane means one agent, so no line ever has to name one. The other three verbs would otherwise be unreachable locally. |
+| Console lifetime | Spawned; its end is not the node's | A serving node has nobody at its pane and may start with a closed stdin. |
+| Prompt string | Caller's choice, `""` for none | A tty echoes the newline; piped input does not, so a per-line prompt stacked on one line. |
+| Herdr coupling | None in J1 | A pane is a terminal. Taking `AsyncBufRead`/`AsyncWrite` keeps the crate testable without Herdr installed. |
 
 ## Advisor consultations
 
@@ -328,6 +392,21 @@ fooled this way.
   rather than justified afterwards. That is what the plan's step 3 is for, and
   it is the closest a single session gets to the gate on its own.
 
+- **Slice J1 — not consulted, and it is the one where a review would have paid.**
+  Not for the trust boundary, which is the part I flagged in advance: `LocalLink`
+  calling `Origin::local_front()` is exactly what that constructor was added for.
+  For the *shape*. Two rounds of questions went out framed as "which kind of
+  second front", because the plan and ARCHITECTURE.md both said "front", and
+  both rounds were the wrong question. It took Casey saying plainly that the
+  point is driving a **remote** agent from a pane.
+
+  The lesson is not about advisors. A design gate would probably have repeated
+  the plan's framing, since the plan is what it would have read. What actually
+  caught it was the person who knew the intent. Worth remembering: when the
+  written plan and the README disagree — the README said "locally or across the
+  network" all along — the disagreement is the signal, and asking beats
+  reconciling them alone.
+
   Add to the review queue, above the G items: whether **malformed-is-fatal** is
   the right call. It is the one decision here that can take a running fleet
   down — a bad edit to a config-managed file stops every node that restarts —
@@ -336,41 +415,57 @@ fooled this way.
 
 ## Next slice
 
-**J — the Herdr front**, the last planned slice: a second front holding the same
-`Arc<dyn ControlApi>` as the Iroh front. That sharing is the claim the
-architecture has been making since slice A — "several fronts, one controller
-actor" — and J is the first thing that actually tests it, because until now
-there has only ever been one front.
+**J2 — report agent state into Herdr.** The last lettered slice. kamiroh knows
+each agent's `AgentStatus`; Herdr shows a state per pane. Pushing the first into
+the second is what makes a kamiroh pane legible in a Herdr session at a glance.
 
-Done when a local Herdr front drives the same agent the Iroh front drives, and
-the two reach the same controller actor rather than two copies of one.
+Done when a pane running kamiroh shows its agent as working while a prompt runs
+and idle when it finishes, in Herdr's own pane list.
 
-**The decision to settle first:** what a Herdr front *is* here. The plan calls J
-a "stub — port exists", which was written when no front existed at all. Now that
-`front::serve` is real, a stub proves nothing the Iroh front does not already
-prove. Decide between a genuine second front (a local socket or stdio protocol,
-which is real work) and a deliberately minimal in-process one whose whole job is
-to demonstrate the shared handle. The second is honest if it is *labelled* — the
-trap is a stub that reads as a Herdr integration.
+**Ground truth, taken from the installed binary rather than the docs site** —
+`herdr 0.8.0`, via `herdr api schema --json`:
 
-Also worth settling:
+```
+method:  pane.report_agent
+params:  { pane_id, source, agent, state }        # required
+         { agent_session_id, agent_session_path, message, seq }   # optional
+state:   "idle" | "working" | "blocked" | "done" | "unknown"
+socket:  $HERDR_SOCKET_PATH, else ~/.config/herdr/herdr.sock
+wire:    newline-delimited JSON, {"id":..,"method":..,"params":{..}}
+         -> {"id":..,"result":{..}} | {"id":..,"error":{"code":..,"message":..}}
+env:     HERDR_ENV=1, HERDR_PANE_ID, HERDR_WORKSPACE_ID, HERDR_TAB_ID
+```
 
-- `Origin::local_front()` has never been called by an adapter, only by the
-  composition root's smoke path. A Herdr front is exactly the case it was
-  designed for, so J is where that constructor finally earns its existence — and
-  where the "no adapter calls `local_front`" check stops being the right check.
-  Decide what replaces it: probably "only the Herdr adapter may".
-- Whether the Herdr front can reload the allowlist. `FileAllowlist::reload()`
-  exists and has no caller; a local, already-trusted front is a plausible first
-  one, and cheaper than a signal handler.
+Re-run `herdr api schema --json` rather than trusting the above; it is a
+snapshot of one version.
 
-Consult the advisor before J lands: it moves the local-trust boundary, which is
-the security-sensitive part.
+**The decisions to settle first:**
 
-**Beyond the plan.** After J the lettered slices are done, and what is left is
+- **How state is observed.** The `AgentController` port has no subscription, and
+  it should not grow one for this. A decorator implementing `AgentController` and
+  wrapping the Kameo one sees every message and reply, so it can report
+  `working` before delegating and the resulting state after — no port change.
+  Check that against the alternative before committing to it.
+- **The mapping.** `Idle → idle`, `Busy → working`, `Stopped → done` are
+  obvious. `AgentStatus::Starting` is not: `unknown` is honest, `idle` reads
+  better in a sidebar. kamiroh has nothing that maps to Herdr's `blocked`, since
+  no agent currently waits on human input — worth stating so the gap is a
+  decision rather than an oversight.
+- **A JSON dependency.** kamiroh has no serde in the tree today and
+  `kamiroh-domain` is still dependency-free. `serde_json` in the Herdr adapter
+  alone does not threaten that, but it is the first JSON in the workspace and
+  the reason should be written down.
+- **What happens when Herdr is not there.** No `HERDR_ENV`, no socket, or a
+  socket that refuses: reporting must be a silent no-op, never a startup
+  failure. kamiroh runs outside Herdr as a matter of course.
+
+Consult the advisor before J2 lands only if the decorator approach changes a
+port; otherwise it is not an architecture boundary.
+
+**Beyond the plan.** After J2 the lettered slices are done, and what is left is
 what the plan deferred rather than specified: a real agent runtime behind
-`Agent`, a reload trigger, and whatever the `ControllerError::Rejected` nit
-below turns into. Worth a fresh planning pass rather than inventing K.
+`Agent`, an allowlist reload trigger, and whatever the `ControllerError::Rejected`
+nit below turns into. Worth a fresh planning pass rather than inventing K.
 
 ## Known nits (not worth their own commit)
 
