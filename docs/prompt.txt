@@ -1,3 +1,6 @@
+[Historical. CLAUDE.md at the repo root now carries the working rules and
+is loaded automatically. This is the prompt the project started from.]
+
 You are building kamiroh in this repo.
 
 Product (aims, not all implemented yet):

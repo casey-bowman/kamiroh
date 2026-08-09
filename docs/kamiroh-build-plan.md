@@ -174,7 +174,7 @@ This is the intended baseline. One terminal or Herdr pane is enough for the enti
 cd /path/to/kamiroh          # git repo root (main checkout)
 claude --advisor opus
 
-# Paste master prompt (or rely on CLAUDE.md).
+# CLAUDE.md is loaded automatically; nothing to paste.
 # Then each turn:
 #   Continue the kamiroh loop: read docs/LOOP.md, execute the Next slice only,
 #   verify with cargo, update LOOP.md, commit with conventional commits.
