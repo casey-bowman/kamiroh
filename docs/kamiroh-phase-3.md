@@ -103,8 +103,9 @@ Two things have never been done on real hardware.
 
 - **NAT traversal.** M2 proved identity-only addressing with both nodes on one
   machine; a relay may never have been used. This needs a second machine on a
-  different network. It is also the only remaining claim in the README that has
-  not been demonstrated.
+  different network, and the procedure is written:
+  [reachability-test.md](./reachability-test.md). It is the only remaining claim
+  in the README that has not been demonstrated.
 - **Use it.** Everything to date has been verified by scripts written alongside
   the code. Nobody has driven a real agent through kamiroh for a day's work.
   That is the cheapest remaining source of true information about what is wrong,

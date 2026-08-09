@@ -72,6 +72,10 @@ pub enum FrontError {
 }
 
 async fn handle_connection(incoming: Incoming, api: Arc<dyn ControlApi>) -> Result<(), FrontError> {
+    // Read before awaiting: the path is a property of the arriving connection,
+    // and this is the node that can prove a peer came from outside its network.
+    let path = crate::describe_path(&incoming.remote_addr());
+
     let connection = incoming
         .await
         .map_err(|error| FrontError::Connect(error.to_string()))?;
@@ -79,6 +83,7 @@ async fn handle_connection(incoming: Incoming, api: Arc<dyn ControlApi>) -> Resu
     // The authenticated peer. Not read from the request frame — that is peer
     // controlled, and trusting it would defeat the allowlist entirely.
     let peer = connection.remote_id();
+    tracing::info!(%peer, %path, "accepted a peer");
 
     let (mut send, mut recv) = connection
         .accept_bi()

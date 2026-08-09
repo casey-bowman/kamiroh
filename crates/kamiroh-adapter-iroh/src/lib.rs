@@ -40,6 +40,30 @@ use kamiroh_domain::{EndpointId, NodeSecret};
 /// mismatched peers fail to negotiate rather than misinterpreting each other.
 pub const ALPN: &[u8] = b"kamiroh/control/0";
 
+/// How a connection actually reached the other end.
+///
+/// Iroh may start on a relay and upgrade to a direct path once hole punching
+/// succeeds, so this is a snapshot taken when the connection was established,
+/// not a verdict for its lifetime.
+///
+/// Worth logging because "it connected" does not say *how*. Across two networks
+/// both answers prove NAT traversal — a relayed path and a hole-punched direct
+/// one are both things a bare `host:port` could not have done — but only one of
+/// them involves a third party carrying the traffic, and an operator is
+/// entitled to know which they got.
+pub(crate) fn describe_path(addr: &iroh::endpoint::IncomingAddr) -> String {
+    use iroh::endpoint::IncomingAddr;
+
+    match addr {
+        IncomingAddr::Ip(socket) => format!("direct {socket}"),
+        IncomingAddr::Relay { url, .. } => format!("relayed via {url}"),
+        IncomingAddr::Custom(addr) => format!("custom transport {addr:?}"),
+        // `IncomingAddr` is `#[non_exhaustive]`: Iroh may add a path kind, and
+        // a new one should read as unknown rather than fail to compile here.
+        other => format!("unrecognised path {other:?}"),
+    }
+}
+
 /// Derives this node's public endpoint id from its secret.
 ///
 /// The id is the ed25519 public key for `secret`, which is exactly what Iroh

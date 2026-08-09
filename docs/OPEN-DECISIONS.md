@@ -58,9 +58,10 @@ nodes were on one machine, so a relay may never have been used.
 **Why code cannot settle it.** It needs a second machine on a different network.
 No amount of local testing substitutes; that is the whole point of the claim.
 
-**What would settle it:** run one node at home with `KAMIROH_REACH=anywhere`,
-and a second elsewhere — a phone hotspot is enough — with `KAMIROH_PEER` set to
-the home node's endpoint id and no address. If the pane answers, it works.
+**What would settle it:** [reachability-test.md](./reachability-test.md) — a
+fifteen-minute procedure with the exact commands, what counts as proof, and the
+one way to get a false pass (running both machines on the same network, where
+they find each other over the LAN and it looks like success).
 
 **Cost of leaving it open:** the README's headline case, "home ↔ cafe, behind
 NAT", is the one claim in it that has never been demonstrated. Worth settling

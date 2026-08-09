@@ -108,6 +108,11 @@ impl Transport for IrohTransport {
                     detail: error.to_string(),
                 })?;
 
+        // No path here: an established `Connection` does not expose one the way
+        // an arriving `Incoming` does. The receiving node logs it, which is the
+        // end that can prove a peer reached it from another network.
+        tracing::info!(peer = %to.endpoint, "connected to peer");
+
         let (mut send, mut recv) = connection.open_bi().await.map_err(backend)?;
         send.write_all(&request).await.map_err(backend)?;
         send.finish().map_err(backend)?;
