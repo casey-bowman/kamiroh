@@ -2,6 +2,13 @@
 
 ## Current phase
 
+**Phase 2 is finished too** — M1–M4 and the review queue. The next pass is
+[kamiroh-phase-3.md](./kamiroh-phase-3.md), which found that the *control
+vocabulary* is now the narrowest part of the system: a caller cannot read a long
+task's output without sending another prompt at it, and `Shutdown` stops
+kamiroh's actor while the coding agent carries on. Both were read out of the
+code rather than remembered.
+
 **The lettered plan is finished.** A→J are all complete.
 
 | | slice | what it left behind |

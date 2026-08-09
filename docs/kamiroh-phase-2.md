@@ -344,3 +344,12 @@ made as one rather than justified by a cost that is not there.
 **If the answer is no**, M1 returns `Output` only and blocked-ness is invisible
 to kamiroh. Workable, but the "my agent is stuck" case never reaches you
 remotely, which is a good part of why you would want kamiroh at a cafe at all.
+
+---
+
+## Done
+
+All four milestones and the review queue. Continued in
+[kamiroh-phase-3.md](./kamiroh-phase-3.md), whose finding is that the four
+`ControlMessage` verbs are now the constraint — ample when an agent echoed, too
+narrow once a real one is behind them.
