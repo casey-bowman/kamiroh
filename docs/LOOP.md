@@ -111,6 +111,32 @@ the agent and its answer came back:
    which proves the same path — front, allowlist bypass, controller — and costs
    nothing.
 
+**The live test has a human precondition, and that is correct.** Claude Code
+asks for workspace trust the first time an agent runs in a given directory, and
+records the answer per path as `hasTrustDialogAccepted` in `~/.claude.json`. So
+it is asked once per scratch directory, not once per run — which is why re-runs
+of the same script were silent.
+
+Worth being clear about the risk and the non-fix. The risk is not the manual
+step; it is that the test is green partly because of consent a human gave
+earlier, and nothing in the script knew it. On a fresh machine or a new path the
+agent sits at the dialog, kamiroh correctly returns `Partial{blocked}`, and the
+script would have shown a confusing near-miss. It now detects a
+blocked-before-we-sent-anything agent and says what it is.
+
+The non-fix is automating the approval — writing the flag into the config, or
+reaching for a skip-permissions switch. That prompt exists because an agent in a
+directory can read and act on everything in it, and scripting around a consent
+prompt is a habit that leaks: M3 contemplates kamiroh calling `agent.start`
+itself, at which point "who approves workspace trust" stops being a test
+convenience and becomes a question about a node starting agents on someone's
+behalf. `claude-code-setup.md` already treats workspace trust as a one-time
+human step for this repo; this is the same shape.
+
+**It is also `Blocked` in the wild.** A trust dialog is exactly "cannot proceed
+without a human", which kamiroh gained vocabulary for in M1. That raises the
+open question below.
+
 Two smaller operational notes. `agent.start` fails with `agent_pane_busy` until
 the new pane's shell reaches its prompt, so a freshly split pane needs a moment.
 And `DEFAULT_LINES = 200` returns the whole terminal, splash screen included:
