@@ -1,0 +1,35 @@
+[Historical. CLAUDE.md at the repo root now carries the working rules and
+is loaded automatically. This is the prompt the project started from.]
+
+You are building kamiroh in this repo.
+
+Product (aims, not all implemented yet):
+- Kameo actors for agents over Iroh
+- Peer actors addressable by name and endpoint; message locally or across the network to drive agents
+- Optional Herdr: local UX/lifecycle; same controller actor as Iroh fronts
+- Allowlisted EndpointIds only; key custody per node
+- Agent-agnostic: no assumption about what agents do
+- No central application control gateway; Iroh relays may assist NAT only
+
+Architecture constraints (non-negotiable):
+- Cargo workspace modular monolith
+- Ports and adapters (hexagonal)
+- Domain and app have no Iroh/Kameo/Herdr concrete types
+- Thin composition root
+- MIT license; copyright personal name for now
+
+Working method:
+- Default: one session on main checkout; one slice at a time
+- Executor implements and verifies; consult the advisor ONLY at architecture boundaries,
+  public port traits, security-sensitive paths (allowlist, keys), and before declaring a phase done
+- The advisor is a session-level setting (/advisor opus). If it is not on, say so at the
+  gate rather than self-reviewing and calling the gate met
+- After every slice: cargo check -p <touched> (and cargo test when tests exist)
+- Update docs/LOOP.md in the SAME commit as the slice it describes: done / next / blockers
+- Stubs for Herdr/Iroh are OK if ports are real
+
+First deliverable:
+1) Workspace layout + ARCHITECTURE.md
+2) kamiroh-ports traits: transport, allowlist, key store, agent controller messages
+3) No-op or in-memory adapters so the bin compiles
+4) cargo check workspace green

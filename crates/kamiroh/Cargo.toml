@@ -1,0 +1,30 @@
+[package]
+name = "kamiroh"
+description = "Peer actors, addressable by name and endpoint, that message each other--locally or across the network—-to drive agents"
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kamiroh"
+path = "src/main.rs"
+
+# The composition root is the one crate allowed to depend on adapters. Its job is
+# wiring and nothing else; logic belongs in kamiroh-app.
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+kamiroh-app.workspace = true
+kamiroh-adapter-memory.workspace = true
+kamiroh-adapter-fs.workspace = true
+kamiroh-adapter-iroh.workspace = true
+kamiroh-adapter-kameo.workspace = true
+kamiroh-adapter-herdr.workspace = true
+tokio = { workspace = true, features = ["signal"] }
+tracing.workspace = true
+# `registry` gives per-crate filtering through `Targets`, which needs no regex.
+# `env-filter` would pull one in for dynamic matching kamiroh does not use.
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "ansi", "registry"] }

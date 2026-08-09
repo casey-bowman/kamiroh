@@ -1,0 +1,27 @@
+[package]
+name = "kamiroh-adapter-iroh"
+description = "Iroh adapter for kamiroh: endpoint identity and peer transport"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+# `iroh` rather than `iroh-base`: F1 needed only the key types, but the transport
+# needs the QUIC stack, and `iroh` re-exports `SecretKey`/`PublicKey`/`EndpointId`
+# from `iroh-base`. Depending on both would be two paths to one type and an
+# invitation to version skew.
+iroh = "1.0"
+
+tracing.workspace = true
+
+[dev-dependencies]
+kamiroh-app.workspace = true
+kamiroh-adapter-memory.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "time"] }

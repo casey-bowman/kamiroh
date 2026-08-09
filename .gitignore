@@ -1,1 +1,8 @@
 /target
+.claude/settings.local.json
+.claude/worktrees/
+.DS_Store
+
+# Node secrets never belong in git (claude-code-setup.md, safeguards).
+# Demos write theirs under $TMPDIR, so this is insurance, not a fix.
+*.key

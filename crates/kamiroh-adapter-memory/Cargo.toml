@@ -1,0 +1,16 @@
+[package]
+name = "kamiroh-adapter-memory"
+description = "In-memory kamiroh adapters for development, tests, and the composition root smoke path"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }
