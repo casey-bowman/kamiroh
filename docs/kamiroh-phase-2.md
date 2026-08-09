@@ -236,7 +236,7 @@ the adapter. There is no return path.
 |---|---|---|
 | 1 | `Agent::run` returns more than a `Payload` | **Forced, cheap.** Adapter-local trait, two implementors, one crate. Needed whatever else is decided. |
 | 2 | `AgentStatus::Blocked` | **Cheap, additive.** One byte on the wire (`Starting=1 … Stopped=4`, so `Blocked=5`). Fills the gap §6d already documents. |
-| 3 | A `ControlReply` variant carrying output *and* blocked-ness | **Expensive.** Matched in nine files across six crates. |
+| 3 | A `ControlReply` variant carrying output *and* blocked-ness | **Cheaper than it looks.** Four sites — `encode_reply`, `decode_reply`, `console::render`, `report::state_after` — in two crates, every one caught by the compiler. |
 
 *The wire cost is smaller than it looks.* `PROTOCOL_VERSION` guards framing, and
 neither change alters framing — both add a discriminant inside the existing
@@ -252,15 +252,36 @@ evidence that the boundary is right; preserving it further is sunk cost.
 ARCHITECTURE.md §7 agrees: a needed domain change is "the signal to revisit the
 port", not a prohibition.
 
-**Recommended: take 1 and 2, defer 3.** That makes `/status` truthful and gives
-J2's reporter a correct mapping for free — `Status(Blocked)` already flows
-through `state_after` into `PaneAgentState::Blocked`.
+**Recommended: take all three, with 3 in its minimal additive form** — one
+variant meaning "here is what it said, and it is now waiting for you".
 
-The residual gap, stated rather than hidden: a *prompt* ending blocked still
-returns `Output`, which J2 maps to `idle`. The output text contains the
-question, so a person at the console sees it, but the pane label stays wrong
-until something asks for status. Worth learning from use before spending
-decision 3 — the same way `reload()` shipped without a trigger.
+An earlier draft of this section recommended deferring 3, on the grounds that it
+was expensive and that the gap was worth learning from use. Both were wrong, and
+the correction is worth keeping because the reasoning generalises:
+
+- **The cost was inflated** by counting files that merely *mention*
+  `ControlReply` rather than the four that match on it exhaustively. One design
+  decision and four compiler-caught follow-ons is not expensive.
+- **"Learn from use" applies to unknown failures, not predicted ones.** This
+  failure is fully specified in advance: a prompt ending blocked returns
+  `Output`, `state_after` maps `Output → Idle`, and the pane reports an agent
+  that is waiting for you as idle.
+- **It contradicts §6d**, written two commits earlier: *"a failure reports
+  `unknown`, never `idle` … `idle` would be a guess presented as a fact."*
+  Deferring means committing that error deliberately, in the feature whose whole
+  purpose is reporting state.
+- **For a remote agent the reply is the only channel.** Status lives on the home
+  node; the reporter runs on the laptop. A follow-up `/status` after each prompt
+  would work, but that is a round trip per prompt to cover a missing field.
+
+What survives from the deferral case is that the *shape* is uncertain until
+`HerdrAgent` exists — which argues for the minimal variant now rather than a
+rich redesign, not for waiting.
+
+**A staging preference is still legitimate.** Splitting M1 into M1a (working
+against `EchoAgent`, domain untouched) and M1b (the domain change) spends
+nothing if M1 turns out badly. That is a choice about sequencing, and should be
+made as one rather than justified by a cost that is not there.
 
 **If the answer is no**, M1 returns `Output` only and blocked-ness is invisible
 to kamiroh. Workable, but the "my agent is stuck" case never reaches you
