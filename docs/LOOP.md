@@ -82,9 +82,46 @@ daemon rejected a custom-reported pane with `agent_not_ready` — "not an active
 named agent" — which is target resolution, downstream of method and parameter
 validation.
 
-**Not verified: a live end-to-end run.** Every kind Herdr can start is a real
-coding agent, so it would launch one in a live session and spend tokens. That
-needs a decision, not an assumption.
+**Then verified live, against a real `claude` agent** started in a scratch pane
+rooted in an empty temp directory. A prompt typed at kamiroh's console reached
+the agent and its answer came back:
+
+```
+> Reply with exactly this and nothing else: KAMIROH-OK
+❯ Reply with exactly this and nothing else: KAMIROH-OK
+⏺ KAMIROH-OK
+```
+
+**The live run found three things no unit test could have.**
+
+1. **A real agent returns to `idle` when it finishes, not `done`.** Waiting on
+   `until: [done, blocked]` therefore never matched, and every prompt expired
+   instead of completing. The observed sequence is `idle → working → idle`, with
+   `blocked` appearing when it wants a human. The wait list now includes `idle`,
+   and the test asserts membership rather than order so it pins the property
+   instead of the spelling.
+2. **Herdr reports an expired wait as an `error`, not as a state.** Code
+   `timeout`, message "timed out waiting for agent status". Mapping it to a
+   failure made a slow agent indistinguishable from a broken socket — precisely
+   the confusion `AgentError` was introduced to prevent. An expired wait now
+   means `Busy`, which is what it is.
+3. **`local_smoke` was prompting the real agent at every startup.** Harmless
+   with `EchoAgent`; with a coding agent behind the port it spends tokens on
+   every launch and puts words in the agent's mouth. It sends `Status` now,
+   which proves the same path — front, allowlist bypass, controller — and costs
+   nothing.
+
+Two smaller operational notes. `agent.start` fails with `agent_pane_busy` until
+the new pane's shell reaches its prompt, so a freshly split pane needs a moment.
+And `DEFAULT_LINES = 200` returns the whole terminal, splash screen included:
+the "output is a heuristic" caveat is not theoretical, it is the first thing you
+see. Tightening it wants more than one agent kind to generalise from.
+
+**Only `claude` has been exercised.** Herdr can start `codex`, `gemini`,
+`cursor`, `devin`, `opencode` and a dozen more, each with its own detection
+manifest and readiness behaviour. Finding #1 — which state means "finished" — is
+exactly the kind of thing that will differ per kind, and kamiroh currently
+assumes one answer for all of them.
 
 **Slice J2 — reporting the pane's agent state to Herdr**
 

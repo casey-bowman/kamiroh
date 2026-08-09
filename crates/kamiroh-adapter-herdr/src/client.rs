@@ -116,17 +116,27 @@ impl Client {
                     },
                 }),
             )
-            .await?;
+            .await;
 
-        // `agent.prompt` answers with the agent's info, so the state after
-        // waiting comes back in the same round trip.
-        Ok(PaneAgentState::from_wire(
-            result
-                .get("agent")
-                .and_then(|agent| agent.get("agent_status"))
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or("unknown"),
-        ))
+        match result {
+            // `agent.prompt` answers with the agent's info, so the state after
+            // waiting comes back in the same round trip.
+            Ok(result) => Ok(PaneAgentState::from_wire(
+                result
+                    .get("agent")
+                    .and_then(|agent| agent.get("agent_status"))
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("unknown"),
+            )),
+            // Herdr reports an expired wait as an **error**, not as a state.
+            // It is not a failure: it means the agent had not settled inside
+            // the time allowed, which is precisely `working`. Treating it as an
+            // error made a slow agent indistinguishable from a broken socket.
+            Err(ClientError::Refused { ref code, .. }) if code == "timeout" => {
+                Ok(PaneAgentState::Working)
+            }
+            Err(other) => Err(other),
+        }
     }
 
     /// Reads the last `lines` of what a Herdr-managed agent has produced.

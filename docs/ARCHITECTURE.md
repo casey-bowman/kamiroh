@@ -474,6 +474,16 @@ Enforced by `kamiroh-adapter-herdr`'s `HerdrAgent` and pinned by its tests:
 - **Herdr not knowing is not kamiroh claiming completion.** An `unknown` state
   becomes `Busy`, not `Idle` — the same rule as §6d, applied to the agent rather
   than the pane.
+- **Wait on the states a real agent actually reaches.** Claude Code returns to
+  `idle` when it has answered, *not* to `done`, so the wait list is
+  `[idle, blocked, done]`. Established by watching one; the earlier
+  `[done, blocked]` meant every prompt expired instead of completing.
+- **An expired wait is `Busy`, not an error.** Herdr reports it as an error
+  (`code: "timeout"`), which is a statement about the wait, not about the agent.
+  Mapping it to `AgentError` made a slow agent look like a broken socket.
+- **Nothing on the startup path may prompt the agent.** `local_smoke` sends
+  `Status`, not `Prompt`: with a real agent behind the port, a startup smoke
+  that prompts spends money and puts words in the agent's mouth.
 - **A non-text prompt is refused, not typed at a terminal.** A pane takes
   keystrokes; sending arbitrary bytes and calling the result an answer is worse
   than saying no.

@@ -126,6 +126,18 @@ unreachable runtime must not arrive as agent speech), and `Agent` had to move to
 output heuristic is as inexact as predicted and is documented as such in
 ARCHITECTURE.md §6e.
 
+**The live run against a real `claude` agent then found three bugs no unit test
+could have** — a finished agent returns to `idle` rather than `done`, Herdr
+reports an expired wait as an error rather than a state, and `local_smoke` was
+prompting the real agent at every startup. All three are fixed and pinned. The
+lesson is worth carrying into M3: a fake built from a schema agrees with
+whatever you assumed the schema meant.
+
+**Only `claude` is exercised.** Each Herdr agent kind has its own detection
+manifest, and "which state means finished" is exactly the sort of thing that
+differs between them. M3 should exercise at least `codex` or `gemini` before
+kamiroh claims to drive agents generally.
+
 ### M2 — It works from where I am
 
 *Reach the home node from a different network.*
@@ -163,6 +175,11 @@ config — a name, and what to start it as.
 **Decisions:** where agent config lives (next to `allow` and `node.key`), and
 whether kamiroh starts agents (`agent.start`) or only attaches to ones already
 running. Prefer attach-only first: starting things is where lifecycle bugs live.
+
+**Also in scope: a second agent kind.** M1 exercised only `claude`. Whether
+`[idle, blocked, done]` is the right wait list for `codex` or `gemini` is
+unknown, and a per-kind difference there is a silent wrong answer rather than a
+loud failure.
 
 ### M4 — Operable and trustworthy
 

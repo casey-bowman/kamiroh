@@ -116,10 +116,18 @@ impl Agent for HerdrAgent {
                 &self.target,
                 text,
                 self.patience,
-                // Both are resting points worth returning on. `blocked` is the
-                // one that matters remotely: without it a waiting agent is
-                // indistinguishable from a slow one.
-                &[PaneAgentState::Done, PaneAgentState::Blocked],
+                // All three are resting points. `idle` is here because of what
+                // a real agent actually does: Claude Code returns to `idle`
+                // when it has answered, **not** to `done`. Waiting only on
+                // `done` and `blocked` meant a finished agent was never
+                // noticed and every prompt expired instead — the first thing a
+                // live run caught. `blocked` is the one that matters remotely:
+                // without it a waiting agent looks merely slow.
+                &[
+                    PaneAgentState::Idle,
+                    PaneAgentState::Blocked,
+                    PaneAgentState::Done,
+                ],
             )
             .await
             .map_err(unavailable)?;
@@ -214,6 +222,35 @@ mod tests {
         assert_eq!(outcome.output.as_text(), Some("step 3 of 9"));
     }
 
+    /// Herdr reports an expired wait as an error. Treating it as one made a
+    /// slow agent indistinguishable from a broken socket — the first thing the
+    /// live run against a real agent hit.
+    #[tokio::test]
+    async fn an_expired_wait_is_still_working_not_a_failure() {
+        let timeout = r#"{"id":"1","error":{"code":"timeout","message":"timed out waiting for agent status"}}"#;
+        let outcome = run_against(vec![timeout.to_owned(), read("half an answer")], "slow job")
+            .await
+            .expect("an expired wait must not fail the run");
+
+        assert_eq!(outcome.status, AgentStatus::Busy);
+        assert_eq!(outcome.output.as_text(), Some("half an answer"));
+    }
+
+    /// Any *other* refusal is still a failure — the mapping above must not
+    /// swallow real errors.
+    #[tokio::test]
+    async fn a_non_timeout_refusal_is_still_an_error() {
+        let refused = r#"{"id":"1","error":{"code":"agent_not_found","message":"agent target w1:p1 not found"}}"#;
+        let error = run_against(vec![refused.to_owned()], "hello")
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, AgentError::Unavailable { .. }),
+            "got {error:?}"
+        );
+    }
+
     /// Herdr not knowing must not become kamiroh claiming completion.
     #[tokio::test]
     async fn an_unknown_state_is_treated_as_still_working() {
@@ -262,8 +299,18 @@ mod tests {
         assert_eq!(sent[0]["method"], "agent.prompt");
         assert_eq!(sent[0]["params"]["target"], "w7:p3");
         assert_eq!(sent[0]["params"]["text"], "do the thing");
-        assert_eq!(sent[0]["params"]["wait"]["until"][0], "done");
-        assert_eq!(sent[0]["params"]["wait"]["until"][1], "blocked");
+        // `idle` must be in the list. A real Claude agent returns to `idle`
+        // when it has answered, not to `done`, so omitting it meant every
+        // prompt expired instead of completing.
+        let until = sent[0]["params"]["wait"]["until"]
+            .as_array()
+            .expect("until must be a list");
+        for state in ["idle", "blocked", "done"] {
+            assert!(
+                until.iter().any(|value| value == state),
+                "{state} missing from {until:?}"
+            );
+        }
 
         assert_eq!(sent[1]["method"], "agent.read");
         assert_eq!(sent[1]["params"]["target"], "w7:p3");

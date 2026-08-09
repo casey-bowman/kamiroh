@@ -278,14 +278,14 @@ fn parse_peer() -> Result<Option<(EndpointId, EndpointAddr)>, Box<dyn Error>> {
 /// Herdr pane will occupy — so it reaches the agent without consulting the
 /// allowlist. The refusal below goes the other way.
 async fn local_smoke(control: &dyn ControlApi, agent: &ActorName) -> Result<(), Box<dyn Error>> {
+    // `Status`, not `Prompt`. A prompt now reaches a real coding agent, so a
+    // startup smoke that sent one would spend tokens on every launch and put
+    // words in the agent's mouth that nobody asked for. `Status` proves the
+    // same path — front, allowlist bypass, controller — and costs nothing.
     let reply = control
-        .deliver(
-            Origin::local_front(),
-            agent,
-            ControlMessage::Prompt(Payload::text("hello")),
-        )
+        .deliver(Origin::local_front(), agent, ControlMessage::Status)
         .await?;
-    println!("local prompt -> {reply:?}");
+    println!("local status -> {reply:?}");
 
     let stranger = EndpointId::from_bytes([0xee; 32]);
     match control
