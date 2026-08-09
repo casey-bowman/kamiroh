@@ -1,10 +1,20 @@
-[package]
-name = "kamiroh"
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
-description = "Peer actors, addressable by name and endpoint, that message each other--locally or across the network—-to drive agents"
 license = "MIT"
-repository = 'https://github.com/casey-bowman/kamiroh'
-readme = "README.md"
+repository = "https://github.com/casey-bowman/kamiroh"
+authors = ["Casey Bowman"]
 
-[dependencies]
+[workspace.dependencies]
+kamiroh-domain = { path = "crates/kamiroh-domain", version = "0.1.0" }
+kamiroh-ports = { path = "crates/kamiroh-ports", version = "0.1.0" }
+kamiroh-app = { path = "crates/kamiroh-app", version = "0.1.0" }
+kamiroh-adapter-memory = { path = "crates/kamiroh-adapter-memory", version = "0.1.0" }
+
+async-trait = "0.1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }

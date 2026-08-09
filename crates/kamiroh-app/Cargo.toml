@@ -1,0 +1,19 @@
+[package]
+name = "kamiroh-app"
+description = "kamiroh application layer: use cases wired only to port traits"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Ports and domain only — no adapter crates, in either section.
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+async-trait.workspace = true
+
+[dev-dependencies]
+# Test-only: an async test needs an executor. Tests use hand-written fake ports
+# defined in-crate, never an adapter crate, so the dependency rule holds.
+tokio = { workspace = true, features = ["rt", "macros"] }

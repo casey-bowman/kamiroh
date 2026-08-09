@@ -1,0 +1,15 @@
+[package]
+name = "kamiroh-ports"
+description = "kamiroh port traits: the boundary between application logic and adapters"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Ports depend on the domain plus trait/error machinery only. Adding an adapter
+# dependency here (iroh, kameo, herdr, tokio) breaks the architecture.
+[dependencies]
+kamiroh-domain.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true

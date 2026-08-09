@@ -1,0 +1,22 @@
+[package]
+name = "kamiroh"
+description = "Peer actors, addressable by name and endpoint, that message each other--locally or across the network—-to drive agents"
+readme = "../../README.md"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "kamiroh"
+path = "src/main.rs"
+
+# The composition root is the one crate allowed to depend on adapters. Its job is
+# wiring and nothing else; logic belongs in kamiroh-app.
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
+kamiroh-app.workspace = true
+kamiroh-adapter-memory.workspace = true
+tokio.workspace = true

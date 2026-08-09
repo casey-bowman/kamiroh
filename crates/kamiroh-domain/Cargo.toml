@@ -1,0 +1,12 @@
+[package]
+name = "kamiroh-domain"
+description = "kamiroh domain types: endpoints, actor names, addresses, control messages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+# Intentionally empty: the domain depends on nothing but std.
+# See docs/ARCHITECTURE.md — this is a load-bearing constraint, not an oversight.
+[dependencies]
