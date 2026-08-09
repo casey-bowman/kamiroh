@@ -5,6 +5,10 @@
 //! that the peer id the front authorises with is the one the dialer actually
 //! holds the key for, and that the allowlist governs a real connection.
 //!
+//! Always `Reach::Direct`: these bind on localhost and address each other
+//! explicitly. `Reach::Anywhere` would publish both nodes' addresses to a
+//! public lookup service on every run, which is not a test's decision to make.
+//!
 //! **These tests need permission to bind UDP sockets.** They pass on an ordinary
 //! machine and fail with `Operation not permitted` inside a restrictive sandbox;
 //! that is an environment limit, not a project one.
@@ -13,7 +17,7 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 
 use iroh::{Endpoint, EndpointAddr};
-use kamiroh_adapter_iroh::{IrohTransport, bind_endpoint, endpoint_id_for, front};
+use kamiroh_adapter_iroh::{IrohTransport, Reach, bind_endpoint, endpoint_id_for, front};
 use kamiroh_adapter_memory::{EchoController, InMemoryAllowlist};
 use kamiroh_app::ControlService;
 use kamiroh_domain::{
@@ -42,7 +46,9 @@ fn local_addr(endpoint: &Endpoint) -> EndpointAddr {
 
 /// Starts a server node hosting one agent and allowing `allowed`.
 async fn serve_node(secret: &NodeSecret, allowed: Vec<EndpointId>) -> (EndpointAddr, EndpointId) {
-    let endpoint = bind_endpoint(secret).await.expect("bind server");
+    let endpoint = bind_endpoint(secret, Reach::Direct)
+        .await
+        .expect("bind server");
     let addr = local_addr(&endpoint);
     let id = endpoint_id_for(secret);
 
@@ -56,8 +62,10 @@ async fn serve_node(secret: &NodeSecret, allowed: Vec<EndpointId>) -> (EndpointA
 
 /// Builds a client transport for `secret` that knows how to reach `peer`.
 async fn client(secret: &NodeSecret, peer: EndpointAddr) -> IrohTransport {
-    let endpoint = bind_endpoint(secret).await.expect("bind client");
-    IrohTransport::new(endpoint, [peer])
+    let endpoint = bind_endpoint(secret, Reach::Direct)
+        .await
+        .expect("bind client");
+    IrohTransport::new(endpoint, [peer], Reach::Direct)
 }
 
 #[tokio::test]
@@ -165,8 +173,8 @@ async fn an_admitted_peer_is_told_when_an_agent_is_missing() {
 #[tokio::test]
 async fn an_unconfigured_peer_is_unreachable_without_dialling() {
     let secret = NodeSecret::from_bytes([99u8; 32]);
-    let endpoint = bind_endpoint(&secret).await.expect("bind");
-    let transport = IrohTransport::new(endpoint, []);
+    let endpoint = bind_endpoint(&secret, Reach::Direct).await.expect("bind");
+    let transport = IrohTransport::new(endpoint, [], Reach::Direct);
 
     let unknown = EndpointId::from_bytes([0xab; 32]);
     let error = transport
@@ -182,8 +190,34 @@ async fn the_local_endpoint_id_matches_the_derived_one() {
     // Ties the transport back to key custody: the id this node reports is the
     // one derived from its secret, so peers can be configured from it.
     let secret = NodeSecret::from_bytes([123u8; 32]);
-    let endpoint = bind_endpoint(&secret).await.expect("bind");
-    let transport = IrohTransport::new(endpoint, []);
+    let endpoint = bind_endpoint(&secret, Reach::Direct).await.expect("bind");
+    let transport = IrohTransport::new(endpoint, [], Reach::Direct);
 
     assert_eq!(transport.local_endpoint_id(), endpoint_id_for(&secret));
+}
+
+/// A `Direct` node asked to dial an id it has no address for must say why, and
+/// say what to change. This is the error a laptop hits before its reach is set.
+#[tokio::test]
+async fn a_direct_node_cannot_dial_an_id_it_has_no_address_for() {
+    let secret = NodeSecret::from_bytes([0x21; 32]);
+    let endpoint = bind_endpoint(&secret, Reach::Direct).await.expect("bind");
+    let transport = IrohTransport::new(endpoint, [], Reach::Direct);
+
+    let stranger = EndpointId::from_bytes([0x99; 32]);
+    let error = transport
+        .send(
+            &PeerAddress::new(stranger, ActorName::new("agent").unwrap()),
+            ControlMessage::Status,
+        )
+        .await
+        .expect_err("a direct node has no way to find an unconfigured peer");
+
+    let TransportError::Unreachable { detail, .. } = &error else {
+        panic!("expected Unreachable, got {error:?}");
+    };
+    assert!(
+        detail.contains("anywhere"),
+        "the error must name the fix; got {detail:?}"
+    );
 }

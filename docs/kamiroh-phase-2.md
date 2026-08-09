@@ -138,7 +138,7 @@ manifest, and "which state means finished" is exactly the sort of thing that
 differs between them. M3 should exercise at least `codex` or `gemini` before
 kamiroh claims to drive agents generally.
 
-### M2 — It works from where I am
+### M2 — It works from where I am — *implemented, live-untested*
 
 *Reach the home node from a different network.*
 
@@ -159,8 +159,20 @@ with no IP address written down anywhere.
 - **Whether `host:port` survives** as an override. It should — every existing
   test and demo uses it, and it is the only way to test without the internet.
 
-**Risk:** low technically, higher on the security-story side. This is the
-milestone that most deserves the advisor gate.
+**Outcome so far.** Implemented as `Reach::{Direct, Anywhere}` behind
+`KAMIROH_REACH`, defaulting to `Direct`. All three sub-decisions went as the
+plan asked: n0's defaults for now with self-hosting recorded as the way to
+remove the third party; both relay and lookup disclosures written up in
+ARCHITECTURE.md §5a; and `host:port` kept, since it is the only thing that works
+on a LAN or in a test.
+
+The security-story risk the plan predicted is where the work actually went. The
+sharpest sentence to keep: **reachable is not admitted, but "unlisted peers
+cannot even find me" stops being true.** That is why it is opt-in.
+
+**Still to do:** a live run, which necessarily publishes this machine's
+addresses to n0's service. And this remains the milestone that most deserves the
+advisor gate — the reasoning in §5a has not been reviewed by anyone.
 
 ### M3 — More than one agent
 

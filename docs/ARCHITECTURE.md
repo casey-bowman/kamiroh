@@ -274,6 +274,44 @@ Pinned by tests in `crates/kamiroh-app/src/control_service.rs` (empty allowlist
 denies everything; an unlisted endpoint reaches no agent; local origin still
 works) and `crates/kamiroh-adapter-memory/src/allowlist.rs`.
 
+### 5a. Reachability is not admission — and it is a separate disclosure
+
+M2 added `Reach`, and it changes what a node *reveals*, not what it admits. The
+allowlist is untouched by it. But the README promises "no central control
+gateway", and a relay is the nearest thing to one, so what each option actually
+exposes is worth stating rather than implying.
+
+| | `Reach::Direct` (default) | `Reach::Anywhere` |
+|---|---|---|
+| Relays | none | n0's, when no direct path exists |
+| Address lookup | none | n0's DNS/pkarr |
+| What leaves this machine | nothing, except to peers it dials | a **signed record of this node's addresses**, published under its endpoint id |
+| To dial a peer you need | its `host:port` | its endpoint id |
+
+**What a relay can observe.** QUIC is end-to-end encrypted between endpoints, so
+a relay carries ciphertext. It can see which two endpoint ids are talking, when,
+and how much — traffic metadata, not content. It cannot read a `ControlMessage`,
+cannot forge one, and cannot admit itself: it is not on anyone's allowlist and
+the front authenticates the peer from the connection, not from the path.
+
+**What discovery publishes.** With `Anywhere`, this node signs a record listing
+its relay URL and direct IP addresses and publishes it to n0's service, keyed by
+its endpoint id. The consequence worth being explicit about: *anyone who knows
+the endpoint id can learn where the node is*, whether or not the allowlist would
+admit them. Reachable is not admitted — but "unlisted peers cannot even find me"
+stops being true, and that is a genuine change to a node's exposure.
+
+**Which is why it is opt-in.** `KAMIROH_REACH` defaults to `direct`. A node does
+not start announcing where it lives because someone failed to set a variable,
+and the startup line always says which mode is in force. Tests and demos are
+`Direct` for the same reason: publishing to a public service is not a decision a
+test suite gets to make on its own.
+
+**Not yet decided:** self-hosted relays and a self-hosted pkarr server. Both are
+supported by Iroh and both would remove the third party without changing
+kamiroh's model. Until then, `Anywhere` means trusting n0 with metadata, and
+that is the honest summary.
+
 ---
 
 ## 6. What the binary does today

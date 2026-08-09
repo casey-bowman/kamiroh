@@ -20,21 +20,30 @@ const REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 ///
 /// # Addressing
 ///
-/// Iroh can dial a bare endpoint id only with a discovery service behind it. This
-/// transport instead carries an explicit address book, supplied by the
-/// composition root, so a node reaches exactly the peers it has been configured
-/// with. That matches kamiroh's posture — no central control gateway, peers
-/// known ahead of time — and keeps dialling working with relays disabled.
-/// Discovery, if it is ever wanted, is an additive change here alone.
+/// The transport carries an explicit address book supplied by the composition
+/// root, so a node reaches exactly the peers it has been configured with. That
+/// matches kamiroh's posture — no central control gateway, peers known ahead of
+/// time — and it is the only thing that works on a LAN or in a test.
+///
+/// Since M2 it can also dial a bare endpoint id, when the node's
+/// [`Reach`](crate::Reach) says addresses can be looked up. That is what lets a
+/// laptop reach a home node it has no route to: identity is enough, and the
+/// address is resolved rather than known. The address book still wins where it
+/// has an entry.
 pub struct IrohTransport {
     endpoint: Endpoint,
     local: EndpointId,
     peers: HashMap<EndpointId, EndpointAddr>,
+    reach: crate::Reach,
 }
 
 impl IrohTransport {
     /// Builds a transport over `endpoint` that can reach `peers`.
-    pub fn new(endpoint: Endpoint, peers: impl IntoIterator<Item = EndpointAddr>) -> Self {
+    pub fn new(
+        endpoint: Endpoint,
+        peers: impl IntoIterator<Item = EndpointAddr>,
+        reach: crate::Reach,
+    ) -> Self {
         let local = EndpointId::from_bytes(*endpoint.id().as_bytes());
         let peers = peers
             .into_iter()
@@ -44,17 +53,30 @@ impl IrohTransport {
             endpoint,
             local,
             peers,
+            reach,
         }
     }
 
+    /// Where to dial a peer.
+    ///
+    /// A configured address wins: it is what the caller asked for, and it is
+    /// the only thing that works on a LAN or in a test. Failing that, an
+    /// id-only address hands the problem to Iroh's address lookup — which is
+    /// the point of [`Reach::Anywhere`](crate::Reach::Anywhere), and is the
+    /// difference between needing a peer's IP and needing only its identity.
     fn address_of(&self, endpoint: &EndpointId) -> Result<EndpointAddr, TransportError> {
-        self.peers
-            .get(endpoint)
-            .cloned()
-            .ok_or_else(|| TransportError::Unreachable {
-                endpoint: *endpoint,
-                detail: "no address configured for this peer".to_owned(),
-            })
+        if let Some(address) = self.peers.get(endpoint) {
+            return Ok(address.clone());
+        }
+        if self.reach.resolves_by_id() {
+            return Ok(EndpointAddr::new(to_iroh_endpoint_id(endpoint)?));
+        }
+        Err(TransportError::Unreachable {
+            endpoint: *endpoint,
+            detail: "no address for this peer, and this node resolves nothing by id \
+                     (set the reach to `anywhere` to look peers up)"
+                .to_owned(),
+        })
     }
 }
 

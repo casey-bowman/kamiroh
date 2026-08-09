@@ -30,6 +30,37 @@ with no agent runtime, and for tests.
 
 ## Done
 
+**M2 — reachable from anywhere (implementation)**
+
+`Reach`, chosen by `KAMIROH_REACH`:
+
+- `direct` (default) — Iroh's `Minimal` preset. No relays, no lookup, nothing
+  published. Exactly today's behaviour, so every test and demo is unchanged.
+- `anywhere` — Iroh's `N0` preset. Relays and address lookup, so a peer can be
+  dialled by endpoint id with no address written down. `KAMIROH_PEER` now
+  accepts a bare id for that reason.
+
+**Opt-in, deliberately.** `anywhere` publishes a signed record of this node's
+addresses to n0's DNS/pkarr under its endpoint id, so anyone holding the id can
+learn where the node is — whether or not the allowlist would admit them.
+Reachable is not admitted, but "unlisted peers cannot even find me" stops being
+true, and a node should not start announcing where it lives because someone
+failed to set a variable. The startup line always says which mode is in force,
+and the transport's error names the fix rather than just failing.
+
+What a relay can see is worth stating once: QUIC is end-to-end encrypted, so a
+relay carries ciphertext and learns which endpoints talk, when, and how much.
+Not content, and it cannot admit itself — it is on nobody's allowlist. Written
+up in ARCHITECTURE.md §5a, along with the note that self-hosted relays and a
+self-hosted pkarr server would remove the third party entirely.
+
+Tests are `Direct` by construction, including the two-node integration tests:
+publishing to a public service is not a decision a test suite makes on its own.
+
+**Not yet verified live.** Proving `anywhere` works means actually publishing
+this machine's addresses to n0's service, which is the disclosure described
+above. Left for an explicit decision rather than assumed.
+
 **M1 — a real agent**
 
 `HerdrAgent`: a prompt goes to a coding agent in a Herdr pane and what it says

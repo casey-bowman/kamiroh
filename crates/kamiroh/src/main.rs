@@ -16,8 +16,9 @@
 //! | `KAMIROH_KEY_FILE` | Where the node secret lives. Default `$XDG_CONFIG_HOME/kamiroh/node.key`. |
 //! | `KAMIROH_ALLOW_FILE` | The allowlist file. Default `$XDG_CONFIG_HOME/kamiroh/allow`. |
 //! | `KAMIROH_ALLOW` | Comma-separated endpoint ids. **Overrides the file entirely**, for tests and for running several nodes on one machine. |
-//! | `KAMIROH_PEER` | `<endpoint-id-hex>@<host:port>` — a peer to greet on startup. |
+//! | `KAMIROH_PEER` | `<endpoint-id-hex>` or `<endpoint-id-hex>@<host:port>` — a peer to greet and to bind the pane console to. The address is optional when the reach can look one up. |
 //! | `KAMIROH_AGENT_TARGET` | A Herdr pane id or agent name to drive. Unset means the echo stand-in. |
+//! | `KAMIROH_REACH` | `direct` (default) or `anywhere`. **`anywhere` publishes this node's addresses** to a public lookup service so peers can find it by endpoint id; read [`Reach`] before setting it. |
 //!
 //! Nothing is admitted by default, whichever source is used: an unset variable,
 //! an absent file and an empty file all mean "admit nobody". A file that exists
@@ -34,7 +35,7 @@ use std::sync::Arc;
 use kamiroh_adapter_fs::{FileAllowlist, FileKeyStore};
 use kamiroh_adapter_herdr::{Link, LocalLink, RemoteLink, console, report};
 use kamiroh_adapter_iroh::{
-    EndpointAddr, IrohTransport, bind_endpoint, endpoint_id_for, front, peer_address,
+    EndpointAddr, IrohTransport, Reach, bind_endpoint, endpoint_id_for, front, peer_address,
 };
 use kamiroh_adapter_kameo::KameoController;
 use kamiroh_adapter_memory::{EchoAgent, InMemoryAllowlist};
@@ -54,6 +55,8 @@ const ALLOW_FILE_ENV: &str = "KAMIROH_ALLOW_FILE";
 const PEER_ENV: &str = "KAMIROH_PEER";
 /// The Herdr-managed agent this node drives, if any.
 const AGENT_TARGET_ENV: &str = "KAMIROH_AGENT_TARGET";
+/// How far this node can be reached from: `direct` (default) or `anywhere`.
+const REACH_ENV: &str = "KAMIROH_REACH";
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -93,13 +96,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let control: Arc<dyn ControlApi> = Arc::new(ControlService::new(allowlist, controller));
 
     // --- Fronts and transport ----------------------------------------------
-    let endpoint = bind_endpoint(&secret).await?;
+    let reach = parse_reach()?;
+    let endpoint = bind_endpoint(&secret, reach).await?;
     let listening: Vec<SocketAddr> = endpoint.bound_sockets();
 
     let peer = parse_peer()?;
     let transport: Arc<dyn Transport> = Arc::new(IrohTransport::new(
         endpoint.clone(),
-        peer.iter().map(|(_, addr)| addr.clone()),
+        peer.iter().filter_map(|(_, addr)| addr.clone()),
+        reach,
     ));
 
     // The Iroh front and the application share one `Arc<dyn ControlApi>`. A
@@ -110,6 +115,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     println!("key file:    {}", key_path.display());
     println!("endpoint id: {local_endpoint}");
     println!("listening:   {listening:?}");
+    println!("reach:       {}", reach.describe());
     println!("agent:       {agent} — {agent_summary}");
     println!("allowing:    {allow_summary}");
 
@@ -257,19 +263,49 @@ fn parse_allow_env(raw: &str) -> Result<Vec<EndpointId>, Box<dyn Error>> {
         .collect()
 }
 
-/// Reads `KAMIROH_PEER` as `<endpoint-id-hex>@<host:port>`.
-fn parse_peer() -> Result<Option<(EndpointId, EndpointAddr)>, Box<dyn Error>> {
+/// A peer to talk to: who it is, and where — when the where is known.
+///
+/// `None` for the address means "look it up", which only a reach that resolves
+/// by id can do.
+type Peer = (EndpointId, Option<EndpointAddr>);
+
+/// Reads `KAMIROH_PEER` as `<endpoint-id-hex>` or `<endpoint-id-hex>@<host:port>`.
+///
+/// The address is optional since M2. Without one the peer is dialled by
+/// identity alone, which only works when this node's reach can look addresses
+/// up — and that is the whole point: from a cafe there is no `host:port` to
+/// write down.
+fn parse_peer() -> Result<Option<Peer>, Box<dyn Error>> {
     let Some(raw) = std::env::var_os(PEER_ENV) else {
         return Ok(None);
     };
     let raw = raw.to_string_lossy().into_owned();
-    let (id, socket) = raw
-        .split_once('@')
-        .ok_or_else(|| format!("{PEER_ENV} must look like <endpoint-id-hex>@<host:port>"))?;
+    let raw = raw.trim();
+
+    let Some((id, socket)) = raw.split_once('@') else {
+        let id: EndpointId = raw.parse()?;
+        return Ok(Some((id, None)));
+    };
 
     let id: EndpointId = id.trim().parse()?;
     let socket: SocketAddr = socket.trim().parse()?;
-    Ok(Some((id, peer_address(&id, socket)?)))
+    Ok(Some((id, Some(peer_address(&id, socket)?))))
+}
+
+/// Reads `KAMIROH_REACH`. Absent means [`Reach::Direct`].
+///
+/// Opt-in rather than default, because `anywhere` publishes this node's
+/// addresses to a public service. A node should not start announcing where it
+/// lives because nobody set a variable.
+fn parse_reach() -> Result<Reach, Box<dyn Error>> {
+    let Some(raw) = std::env::var_os(REACH_ENV) else {
+        return Ok(Reach::Direct);
+    };
+    match raw.to_string_lossy().trim().to_ascii_lowercase().as_str() {
+        "direct" | "" => Ok(Reach::Direct),
+        "anywhere" => Ok(Reach::Anywhere),
+        other => Err(format!("{REACH_ENV} must be `direct` or `anywhere`, not {other:?}").into()),
+    }
 }
 
 /// Proves the local path end to end, in both the allowed and refused direction.

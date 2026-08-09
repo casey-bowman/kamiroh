@@ -30,7 +30,7 @@ pub mod transport;
 pub use iroh::EndpointAddr;
 pub use transport::{IrohTransport, peer_address};
 
-use iroh::endpoint::presets::Minimal;
+use iroh::endpoint::presets::{Minimal, N0};
 use iroh::{Endpoint, SecretKey};
 use kamiroh_domain::{EndpointId, NodeSecret};
 
@@ -55,18 +55,86 @@ pub fn endpoint_id_for(secret: &NodeSecret) -> EndpointId {
     EndpointId::from_bytes(*key.public().as_bytes())
 }
 
+/// How far this node can be reached from.
+///
+/// The two options differ in what they *publish*, not only in what they can
+/// connect to, which is why this is a deliberate choice rather than a default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Reach {
+    /// Only at an address the caller already knows. Publishes nothing.
+    ///
+    /// No relays and no address lookup: a peer must be given `host:port`, and
+    /// nothing about this node leaves the machine except to peers it talks to.
+    /// Correct for a LAN, for tests, and for anyone who has not decided to be
+    /// findable.
+    #[default]
+    Direct,
+
+    /// From anywhere, by endpoint id alone.
+    ///
+    /// Number 0's relays and address lookup. This is what makes the
+    /// home-to-cafe case work, and it has a price worth stating plainly:
+    ///
+    /// - **This node publishes its addresses.** A signed record — relay URL and
+    ///   direct IPs — goes to n0's DNS/pkarr service under this node's endpoint
+    ///   id. Anyone holding the id can then resolve where the node is, whether
+    ///   or not the allowlist would admit them.
+    /// - **A relay may carry the traffic.** When a direct path cannot be
+    ///   established, packets pass through n0's relay. QUIC is end-to-end
+    ///   encrypted, so a relay sees which endpoints are talking, when, and how
+    ///   much — not what they say.
+    ///
+    /// The allowlist is unaffected: reachable is not the same as admitted. But
+    /// "unlisted peers cannot find me" stops being true, and that is a real
+    /// change to a node's exposure.
+    Anywhere,
+}
+
+impl Reach {
+    /// Whether a peer can be dialled from its endpoint id with no address.
+    pub fn resolves_by_id(self) -> bool {
+        matches!(self, Self::Anywhere)
+    }
+
+    /// A short description for a startup line.
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::Direct => "direct only — no relays, no discovery, nothing published",
+            Self::Anywhere => "n0 relays + address lookup — this node's addresses are published",
+        }
+    }
+}
+
 /// Binds an Iroh endpoint for this node, listening for the kamiroh ALPN.
 ///
-/// Uses the [`Minimal`] preset: it sets the mandatory TLS crypto provider and
-/// nothing else — no relays, no discovery. kamiroh addresses peers explicitly
-/// (see [`IrohTransport`]), and relays are a NAT aid rather than a control path,
-/// so bringing them in is a later, additive decision.
-pub async fn bind_endpoint(secret: &NodeSecret) -> Result<Endpoint, iroh::endpoint::BindError> {
-    Endpoint::builder(Minimal)
-        .secret_key(SecretKey::from_bytes(secret.expose_bytes()))
-        .alpns(vec![ALPN.to_vec()])
-        .bind()
-        .await
+/// [`Reach::Direct`] uses the `Minimal` preset — the mandatory TLS crypto
+/// provider and nothing else. [`Reach::Anywhere`] uses the `N0` preset, which
+/// adds relays and address lookup; read that variant's documentation before
+/// choosing it, because it publishes.
+pub async fn bind_endpoint(
+    secret: &NodeSecret,
+    reach: Reach,
+) -> Result<Endpoint, iroh::endpoint::BindError> {
+    let key = SecretKey::from_bytes(secret.expose_bytes());
+    let alpns = vec![ALPN.to_vec()];
+
+    // The two presets are different types, so the builder cannot be shared.
+    match reach {
+        Reach::Direct => {
+            Endpoint::builder(Minimal)
+                .secret_key(key)
+                .alpns(alpns)
+                .bind()
+                .await
+        }
+        Reach::Anywhere => {
+            Endpoint::builder(N0)
+                .secret_key(key)
+                .alpns(alpns)
+                .bind()
+                .await
+        }
+    }
 }
 
 #[cfg(test)]
@@ -75,6 +143,28 @@ mod tests {
 
     fn secret(byte: u8) -> NodeSecret {
         NodeSecret::from_bytes([byte; 32])
+    }
+
+    #[test]
+    fn only_anywhere_resolves_a_bare_endpoint_id() {
+        // The property the transport branches on. `Direct` must never dial an
+        // id it has no address for, or a misconfigured node would silently
+        // start depending on a lookup service it was told not to use.
+        assert!(!Reach::Direct.resolves_by_id());
+        assert!(Reach::Anywhere.resolves_by_id());
+    }
+
+    #[test]
+    fn the_default_reach_publishes_nothing() {
+        // Opt-in is the whole point: `anywhere` announces this node's addresses
+        // to a public service, and that must not happen by omission.
+        assert_eq!(Reach::default(), Reach::Direct);
+    }
+
+    #[test]
+    fn each_reach_says_what_it_does_to_a_startup_line() {
+        assert!(Reach::Direct.describe().contains("nothing published"));
+        assert!(Reach::Anywhere.describe().contains("published"));
     }
 
     #[test]
