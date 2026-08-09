@@ -24,4 +24,6 @@ kameo = { version = "0.17", default-features = false }
 [dev-dependencies]
 # `EchoAgent` moved to the test-double crate when `Agent` became a port.
 kamiroh-adapter-memory.workspace = true
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time"] }
+# `test-util` lets a test advance the clock instead of sleeping through a
+# timeout, so bounding an inline await costs the suite nothing.
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "time", "test-util"] }

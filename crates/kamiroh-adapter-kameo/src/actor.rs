@@ -8,6 +8,7 @@
 //! order the mailbox already decided.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use kameo::Actor;
 use kameo::actor::{ActorRef, WeakActorRef};
@@ -17,6 +18,13 @@ use kameo::reply::{DelegatedReply, ReplySender};
 use kamiroh_domain::{ActorName, AgentStatus, ControlMessage, ControlReply, Payload};
 use kamiroh_ports::{Agent, AgentError, AgentOutcome, ControllerError};
 use tokio::task::AbortHandle;
+
+/// How long the actor will wait for an agent to describe itself.
+///
+/// Generous for what it bounds — asking a local runtime what it is doing — and
+/// short enough that a hung one cannot make an agent unstoppable. This is the
+/// only place the actor awaits anything inline; everything slow is spawned.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// What a controller actor answers with. The error half is the port's own error
 /// type, so nothing has to be translated on the way back out to `ControlApi`.
@@ -156,18 +164,29 @@ impl Message<ControlMessage> for AgentActor {
                 // that caught this — and answering `Idle` then is a guess
                 // presented as a fact.
                 //
-                // Awaited inline, which holds the mailbox for one local
-                // round trip. Worth it: the alternative is a delegated reply
-                // and a second state machine for a call that is microseconds.
-                // Skipped entirely while a prompt is in flight, since then
-                // this actor already knows the answer.
+                // Awaited inline, which holds the mailbox for one local round
+                // trip. Worth it: the alternative is a delegated reply and a
+                // second state machine for a call that should be microseconds.
+                // Skipped entirely while a prompt is in flight, since then this
+                // actor already knows the answer.
                 //
-                // `Ok(None)` and any error both leave the cached value alone:
-                // "no better answer than yours" and "could not ask" are the
-                // same instruction, and a failure to ask is not itself a state.
+                // **Bounded, and that bound is load-bearing.** An inline await
+                // is exactly what this actor must not do without a limit: while
+                // it runs, nothing else in the mailbox moves, so an agent
+                // runtime that accepts a connection and never answers would
+                // make `Interrupt` and `Shutdown` unreachable — the agent could
+                // not even be stopped. `run` is spawned and may take minutes;
+                // this is asked and answered, or it is abandoned.
+                //
+                // `Ok(None)`, an error, and a timeout all leave the cached
+                // value alone: "no better answer than yours", "could not ask"
+                // and "asking took too long" are the same instruction, and none
+                // of them is itself a state.
                 if self.running.is_none() {
                     let agent = Arc::clone(&self.agent);
-                    if let Ok(Some(status)) = agent.status().await {
+                    if let Ok(Ok(Some(status))) =
+                        tokio::time::timeout(STATUS_TIMEOUT, agent.status()).await
+                    {
                         self.status = status;
                     }
                 }

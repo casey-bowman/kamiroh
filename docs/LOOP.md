@@ -30,6 +30,67 @@ with no agent runtime, and for tests.
 
 ## Done
 
+**The review queue, worked through**
+
+Five items had accumulated since F2, all flagged for an advisor nobody has
+turned on. Rather than write five opinions, each was pushed to whichever of
+these it could reach: **demonstrated**, **enforced by a test**, **fixed**, or
+**still a decision for a human**.
+
+| # | item | outcome |
+|---|---|---|
+| 1 | F2's enumeration argument | **enforced** — mutation-tested |
+| 2 | malformed-allowlist-is-fatal (I) | **still yours** — a genuine judgment call |
+| 3 | `Agent` as an adapter trait (G) | **resolved** by M1; struck |
+| 4 | bounded-mailbox reasoning (G) | **a real bug found and fixed** |
+| 5 | §5a's disclosure claim (M2) | **demonstrated** |
+
+**1 — the enumeration argument is enforced, not merely argued.** It rests on
+statement order (authorise before lookup), so the question was whether anything
+would notice a reorder. Answered by mutation: dispatch was moved above the
+allowlist check, keeping `?`, which is the realistic version of the mistake.
+Three tests failed, one at the wire level — `[1,0,2]` (`NO_SUCH_ACTOR`) against
+`[1,0,1]` (`REFUSED`). The mutation was reverted; the property is guarded.
+
+Worth noting what the strongest of those tests actually checks:
+`unlisted_remote_endpoint_is_rejected_without_dispatching` catches something
+worse than enumeration — an unlisted peer's prompt *reaching the agent*. Since
+M1 that means a stranger spending the operator's tokens, so the property is
+worth more now than when it was written.
+
+**4 — the bounded-mailbox reasoning caught a bug I had just introduced.** Slice
+G established that this actor must not await inside a handler, because nothing
+else in the mailbox moves while it does. M1 then added exactly that: `Status`
+awaits `agent.status()` inline, and the Herdr client's `read_line` has no
+timeout. A runtime that accepts a connection and never answers would have
+wedged the actor permanently — `Interrupt` and `Shutdown` unreachable, the agent
+not even stoppable. Bounded now at `STATUS_TIMEOUT`, with a test that hangs an
+agent's `status()` on `pending()` and asserts the controller still answers and
+still shuts down. Note the shape of the mistake: the reasoning was *cited* in
+the very commit that violated it.
+
+**5 — §5a's disclosure is demonstrated.** The claim was that a node holding only
+an endpoint id can locate a published node whether or not the allowlist would
+admit it. Run with a stranger node absent from the allowlist and given nothing
+but the id:
+
+```
+peer c6f5488f… -> peer c6f5488f… refused the connection
+```
+
+`refused`, not `unreachable` — so it found the node and was then rejected. Both
+halves at once: the disclosure is real, and reachable is not admitted.
+
+**2 — malformed-is-fatal is still a decision, and it is yours.** Nothing here
+can settle it, because it is a trade rather than a fact: a malformed allowlist
+stops every node that restarts, against the alternative of a node that comes up
+admitting nobody while looking healthy. Two things narrow it. The blast radius
+is startup only — `FileAllowlist::reload()` already keeps the previous set on a
+bad read, so a running fleet survives a bad edit until it restarts. And the
+error names the file and line. What would settle it properly is a way to check a
+file *before* restarting; kamiroh has no CLI surface for that, and adding one is
+a slice, not a nit.
+
 **M2 — reachable from anywhere (implementation)**
 
 `Reach`, chosen by `KAMIROH_REACH`:
@@ -678,6 +739,11 @@ fooled this way.
   argument in F2 (it rests on ordering, so it breaks quietly if authorisation
   and lookup are ever reordered), then `Agent` as an adapter trait, then the
   bounded-mailbox reasoning in G.
+
+  **All three were worked through later — see "The review queue, worked
+  through" above.** The `Agent` item was resolved by M1 rather than reviewed;
+  the other two produced a mutation test and a real bug fix respectively. A
+  human review is still worth having, but these are no longer unexamined.
 - **Slice I — flagged at the gate, before the design was fixed, and still not
   consulted.** The improvement over F2/G is only in timing: the four decisions
   (fatal-on-malformed, absent-is-empty, env override, reload scope) were put up

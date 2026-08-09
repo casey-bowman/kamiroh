@@ -488,6 +488,13 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 - **One prompt at a time, refused rather than queued.** The mailbox would happily
   queue a second, but silently serialising them would make `Busy` a lie: the
   caller would wait with no way to tell queued from running.
+- **Nothing is awaited inside a handler without a bound.** While an inline await
+  runs, nothing else in the mailbox moves — so an agent runtime that accepts a
+  connection and never answers would make `Interrupt` and `Shutdown` unreachable
+  and the agent unstoppable. `Status` is the only inline await, and it is capped
+  at `STATUS_TIMEOUT`; a timeout leaves the cached status alone, exactly as an
+  error does. Everything slow is spawned. M1 broke this rule while citing it,
+  which is why it now has a test.
 - **A shut-down agent answers the same way whether or not its actor has finished
   stopping.** The actor holds an explicit `Stopped` state *and* a send to a dead
   actor maps to `ControllerError::Stopped`, so the answer never depends on

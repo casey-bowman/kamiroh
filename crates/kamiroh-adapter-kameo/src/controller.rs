@@ -200,6 +200,47 @@ mod tests {
         assert_eq!(reply, ControlReply::Output(Payload::text("ping")));
     }
 
+    /// An agent runtime that accepts a request and never answers must not be
+    /// able to make its agent unstoppable. Found by re-reading slice G's
+    /// bounded-mailbox reasoning after M1 added an inline await to `Status`.
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_agent_runtime_cannot_wedge_its_controller() {
+        struct Hangs;
+
+        #[async_trait]
+        impl Agent for Hangs {
+            async fn run(&self, prompt: Payload) -> Result<AgentOutcome, AgentError> {
+                Ok(AgentOutcome::finished(prompt))
+            }
+
+            async fn status(&self) -> Result<Option<AgentStatus>, AgentError> {
+                // Connected, never answers: the shape a stalled socket has.
+                std::future::pending().await
+            }
+        }
+
+        let controller = KameoController::new().with_agent(agent(), Hangs);
+
+        // Answers from the cached view rather than waiting forever.
+        assert_eq!(
+            controller
+                .dispatch(&agent(), ControlMessage::Status)
+                .await
+                .unwrap(),
+            ControlReply::Status(AgentStatus::Idle)
+        );
+
+        // And the mailbox still moves — this is the part that matters, since a
+        // wedged actor could not be interrupted or shut down.
+        assert_eq!(
+            controller
+                .dispatch(&agent(), ControlMessage::Shutdown)
+                .await
+                .unwrap(),
+            ControlReply::Accepted
+        );
+    }
+
     #[tokio::test]
     async fn a_fresh_agent_is_idle() {
         let controller = KameoController::new().with_agent(agent(), EchoAgent);
