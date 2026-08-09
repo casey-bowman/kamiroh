@@ -207,7 +207,61 @@ M4 forward: observability and the review queue matter more than features when
 strangers run it, and the enumeration argument in particular should not go to
 strangers unreviewed.
 
-One more, worth deciding once rather than per-milestone: **M1's "blocked"
-question decides whether Phase 2 touches `kamiroh-domain`.** Every slice since B
-has left the domain and the ports alone. That is worth a lot, and it is worth
-knowing before M1 starts whether we are prepared to spend it.
+### 5.1 The domain question, in full
+
+**Will you add `AgentStatus::Blocked` to `kamiroh-domain`?** Worth deciding once,
+before M1 starts, rather than mid-slice.
+
+*The case:* an agent stops at "run this command? (y/n)". From a cafe that is the
+single most useful thing to know — still working, or waiting on you. Herdr has
+`blocked` as one of its five states and built its UI around it.
+
+*Why kamiroh cannot say it:*
+
+```rust
+// kamiroh-domain
+enum AgentStatus  { Starting, Idle, Busy, Stopped }     // no "waiting on a human"
+enum ControlReply { Accepted, Status(AgentStatus), Output(Payload) }
+
+// kamiroh-adapter-kameo
+async fn run(&self, prompt: Payload) -> Payload;        // can only return bytes
+```
+
+Even when `HerdrAgent` sees `agent.wait` return `blocked`, that fact dies inside
+the adapter. There is no return path.
+
+*It is three decisions, and only one is expensive:*
+
+| | change | cost |
+|---|---|---|
+| 1 | `Agent::run` returns more than a `Payload` | **Forced, cheap.** Adapter-local trait, two implementors, one crate. Needed whatever else is decided. |
+| 2 | `AgentStatus::Blocked` | **Cheap, additive.** One byte on the wire (`Starting=1 … Stopped=4`, so `Blocked=5`). Fills the gap §6d already documents. |
+| 3 | A `ControlReply` variant carrying output *and* blocked-ness | **Expensive.** Matched in nine files across six crates. |
+
+*The wire cost is smaller than it looks.* `PROTOCOL_VERSION` guards framing, and
+neither change alters framing — both add a discriminant inside the existing
+shape. An older node receiving an unknown byte gets `CodecError::Discriminant`,
+a clean protocol error rather than a silent misparse. No version bump; mixed
+versions fail legibly.
+
+*The guard against motivated reasoning is not the streak, it is agnosticism.*
+`Blocked` means "cannot proceed without a human" — it says nothing about what
+agents do, so it passes. `AwaitingToolApproval` would be Claude-Code-shaped and
+would fail. And the "no domain change since B" record has already delivered its
+evidence that the boundary is right; preserving it further is sunk cost.
+ARCHITECTURE.md §7 agrees: a needed domain change is "the signal to revisit the
+port", not a prohibition.
+
+**Recommended: take 1 and 2, defer 3.** That makes `/status` truthful and gives
+J2's reporter a correct mapping for free — `Status(Blocked)` already flows
+through `state_after` into `PaneAgentState::Blocked`.
+
+The residual gap, stated rather than hidden: a *prompt* ending blocked still
+returns `Output`, which J2 maps to `idle`. The output text contains the
+question, so a person at the console sees it, but the pane label stays wrong
+until something asks for status. Worth learning from use before spending
+decision 3 — the same way `reload()` shipped without a trigger.
+
+**If the answer is no**, M1 returns `Output` only and blocked-ness is invisible
+to kamiroh. Workable, but the "my agent is stuck" case never reaches you
+remotely, which is a good part of why you would want kamiroh at a cafe at all.
