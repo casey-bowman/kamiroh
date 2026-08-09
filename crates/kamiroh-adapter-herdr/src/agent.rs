@@ -118,7 +118,18 @@ impl HerdrAgent {
     /// safe without an assumption — a blocked agent is not working, so it is
     /// asked for `Recent`, and if Herdr will not scroll a dialog either then the
     /// retry answers instead of the run failing.
-    async fn read_output(&self, settled: PaneAgentState) -> Result<String, ClientError> {
+    ///
+    /// **The fallback also corrects the state, which is the part that is easy to
+    /// get wrong.** It returns the state the outcome should be built from, not
+    /// the one it was given. `agent_not_idle` is Herdr saying *at read time*
+    /// that this agent is not idle, and that is newer information than a
+    /// `settled` observed a moment earlier — so trusting the older one would
+    /// report `Idle` for an agent that is working, carrying a mid-task screen as
+    /// if it were an answer. §6e names that as the dangerous direction.
+    async fn read_output(
+        &self,
+        settled: PaneAgentState,
+    ) -> Result<(String, PaneAgentState), ClientError> {
         let source = match settled {
             // Nothing is going to be scrolled while it is still going.
             PaneAgentState::Working | PaneAgentState::Unknown => ReadSource::Visible,
@@ -135,11 +146,13 @@ impl HerdrAgent {
             Err(error)
                 if source == ReadSource::Recent && error.refusal_code() == Some(AGENT_NOT_IDLE) =>
             {
-                self.client
+                let text = self
+                    .client
                     .read_agent(&self.target, ReadSource::Visible, self.lines)
-                    .await
+                    .await?;
+                Ok((text, PaneAgentState::Working))
             }
-            other => other,
+            other => other.map(|text| (text, settled)),
         }
     }
 }
@@ -183,9 +196,12 @@ impl Agent for HerdrAgent {
             .await
             .map_err(unavailable)?;
 
-        let output = Payload::text(self.read_output(settled).await.map_err(unavailable)?);
+        // `state`, not `settled`: the read can learn that the agent is working
+        // after all, and that is the fresher of the two answers.
+        let (output, state) = self.read_output(settled).await.map_err(unavailable)?;
+        let output = Payload::text(output);
 
-        Ok(match settled {
+        Ok(match state {
             // Done and idle both mean the agent has nothing outstanding.
             PaneAgentState::Done | PaneAgentState::Idle => AgentOutcome::finished(output),
             PaneAgentState::Blocked => AgentOutcome::blocked(output),
@@ -362,14 +378,27 @@ mod tests {
     /// can be working again by the time the read lands. It falls back rather
     /// than failing — and this also covers a `blocked` agent, should Herdr
     /// decline to scroll a dialog.
+    ///
+    /// **And the refusal corrects the status.** Herdr saying `agent_not_idle`
+    /// at read time outranks a `settled` measured a moment before it. Reporting
+    /// `Idle` here would hand a caller a mid-task screen as a finished answer,
+    /// which is the direction §6e calls dangerous.
     #[tokio::test]
-    async fn scrollback_refused_after_the_agent_settled_falls_back_to_the_screen() {
+    async fn scrollback_refused_after_the_agent_settled_says_working_not_finished() {
         let herdr = herdr_reading("idle", like_a_real_pane).await;
         let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
 
         let outcome = agent.run(Payload::text("quick one")).await.unwrap();
 
-        assert_eq!(outcome.status, AgentStatus::Idle, "still a finished run");
+        assert_eq!(
+            outcome.status,
+            AgentStatus::Busy,
+            "the refusal is newer information than the settle"
+        );
+        assert!(
+            !outcome.is_finished(),
+            "must not look like a finished answer"
+        );
         assert_eq!(outcome.output.as_text(), Some("step 3 of 9"));
         assert_eq!(
             read_sources(&herdr).await,

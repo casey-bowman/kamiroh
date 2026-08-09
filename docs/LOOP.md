@@ -82,6 +82,15 @@ broken target into a plausible-looking answer, so `pane_not_found` stays a
 failure. Matched on the **code**, never the message — established practice here,
 and the prose is Herdr's to reword.
 
+**And the fallback corrects the status, which is the part that was nearly got
+wrong.** The first version kept `settled` and built the outcome from it, so the
+race case answered `finished` — handing a caller a mid-task screen as if it were
+an answer. But `agent_not_idle` is Herdr saying *at read time* that this agent is
+not idle, and that outranks a state observed a moment earlier. The fallback
+returns `Working`, so the outcome is `Partial{Busy}`. Reporting `Idle` for a
+working agent is the direction §6e calls dangerous, and it was one assertion away
+from being pinned as correct.
+
 **The real deliverable is the test double.** `FakeHerdr::scripted` answered
 positionally and never read the request, which is precisely why nine tests
 agreed with a read the daemon rejects: *a fake that cannot disagree with a
