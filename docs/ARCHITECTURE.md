@@ -62,7 +62,7 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-adapter-fs` | Node key custody and the allowlist, on disk | domain, ports, `async-trait`, `getrandom`, `thiserror` |
 | `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport and inbound front (F2) | domain, ports, `iroh-base`, `iroh` |
 | `kamiroh-adapter-kameo` | One controller actor per agent | domain, ports, `async-trait`, `tokio`, `kameo` |
-| `kamiroh-adapter-herdr` | The pane console: one pane, one agent | domain, ports, `async-trait`, `thiserror`, `tokio` |
+| `kamiroh-adapter-herdr` | The pane console, and reporting its state to Herdr | domain, ports, `async-trait`, `thiserror`, `tokio`, `serde_json` |
 | `kamiroh` | Composition root (binary) | all of the above, `tokio` |
 
 `kamiroh-adapter-iroh` depends on `iroh-base` with `default-features = false,
@@ -82,13 +82,18 @@ four now exist, each arriving with real behaviour rather than as a stub.
 `kamiroh-adapter-memory` covered the first deliverable's "no-op or in-memory
 adapters so the bin compiles" in one crate, and remains the test double set.
 
-`kamiroh-adapter-herdr` names Herdr and depends on nothing of it. A pane is a
-terminal, so the console takes an `AsyncBufRead` and an `AsyncWrite` and is
-tested with a string and a `Vec<u8>`. Herdr's socket API is real — newline
-JSON on `$HERDR_SOCKET_PATH`, with `pane.report_agent` for pushing agent state
-into the pane list — and using it is slice J2, which is outbound and needs a
-JSON client. Keeping it out is what keeps this crate testable without Herdr
-installed.
+`kamiroh-adapter-herdr` is split so that only half of it knows Herdr exists.
+A pane is a terminal, so `console` takes an `AsyncBufRead` and an `AsyncWrite`
+and is tested with a string and a `Vec<u8>`. `client` and `report` speak
+Herdr's local socket API — newline JSON on `$HERDR_SOCKET_PATH`, method
+`pane.report_agent` — and are tested against a fake socket. Outside a pane the
+reporting half does nothing at all.
+
+`serde_json` is adapter-local and does not weaken F2's decision to hand-write
+the Iroh codec. That was about keeping `kamiroh-domain` dependency-free for a
+protocol kamiroh defines; this is someone else's JSON, whose response shape is
+theirs to change, and one field — the pane id — arrives from the environment
+unvalidated and must be escaped by something that knows the rules.
 
 `kamiroh-adapter-kameo` takes `kameo` with `default-features = false`. Its
 `remote` feature pulls libp2p, and a second peer-to-peer stack in the tree would
@@ -363,6 +368,48 @@ the same, because what they protect is not the same:
 
 ## 6c. Controller actor rules
 
+Enforced by `kamiroh-adapter-herdr` and pinned by its tests:
+
+- **Reporting decorates `Link`, not `AgentController`.** The obvious choice is a
+  decorator over the controller port, which sees every message any front
+  delivers. It is wrong for the case that matters: a pane driving an agent on
+  another node never touches the local controller, so it would report nothing
+  precisely when there is something to report. A pane's state is the state of
+  the agent *that pane is bound to*, which is what `Link` names.
+- **Reporting never delays or fails a control message.** States go to a
+  background task through a bounded channel, and a full channel drops the
+  update. A sidebar label is not worth making someone's prompt slower, and
+  Herdr being down is not a reason for kamiroh to stop working.
+- **Absence is normal, not degraded.** No `HERDR_PANE_ID` means `attach` returns
+  the link untouched and says so once. kamiroh runs outside Herdr as a matter of
+  course.
+- **Asking does not change the answer.** Only a prompt reports `working` before
+  delegating; `/status` must not briefly claim the agent is busy just by being
+  asked. A `Status` reply is reported as whatever the agent said.
+- **A failure reports `unknown`, never `idle`.** An unreachable peer says
+  nothing about the agent behind it, and `idle` would be a guess presented as a
+  fact.
+- **One request per connection.** Herdr answers and then closes; three `ping`s
+  on one connection produce one response. Holding a connection open succeeds
+  once and then fails forever with a broken pipe. Established by experiment
+  against `herdr 0.8.0`, not from its documentation.
+
+Two mapping gaps, both decisions rather than oversights. `AgentStatus::Starting`
+maps to `unknown` rather than `idle`, since a sidebar reading "idle" invites
+someone to prompt an agent that is not ready — though it is unreachable today,
+as `KameoController` spawns actors already idle. And nothing maps to Herdr's
+`blocked`, which means "waiting on a human"; no kamiroh agent currently waits on
+input, and when one does, that is where it surfaces.
+
+**Not covered:** a node serving agents for remote peers has nobody at its pane,
+and inbound messages arrive through the Iroh front rather than any `Link`, so
+its pane does not show its agent working while a peer drives it. That wants the
+`AgentController` decorator after all, as a *second* reporter — `pane.report_agent`
+takes an optional `seq`, which is the mechanism for ordering two sources on one
+pane.
+
+## 6d. Herdr reporting rules
+
 Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 
 - **One actor per agent; every state change goes through its mailbox.** That is
@@ -405,7 +452,7 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 | ~~I~~ | `kamiroh-adapter-fs` | ✅ done — `Allowlist` from a file, replacing the list the composition root built from an env var |
 | ~~J1~~ | `kamiroh-adapter-herdr` | ✅ done — the pane console: one pane, one agent, local **or remote** |
 | | | ⚠ The row above used to read "a second front calling the same `ControlApi`", which is half the story. See §3a. |
-| J2 | `kamiroh-adapter-herdr` | Report `AgentStatus` to Herdr via `pane.report_agent` — outbound, not a front |
+| ~~J2~~ | `kamiroh-adapter-herdr` | ✅ done — reports the pane's agent state via `pane.report_agent`; see §6d |
 
 Each is a constructor swap in `crates/kamiroh/src/main.rs`. No slice above should
 require an app-layer or domain change; if one does, that is the signal to revisit

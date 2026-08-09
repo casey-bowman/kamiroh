@@ -31,7 +31,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use kamiroh_adapter_fs::{FileAllowlist, FileKeyStore};
-use kamiroh_adapter_herdr::{Link, LocalLink, RemoteLink, console};
+use kamiroh_adapter_herdr::{Link, LocalLink, RemoteLink, console, report};
 use kamiroh_adapter_iroh::{
     EndpointAddr, IrohTransport, bind_endpoint, endpoint_id_for, front, peer_address,
 };
@@ -131,7 +131,12 @@ async fn run() -> Result<(), Box<dyn Error>> {
         )),
         None => Arc::new(LocalLink::new(Arc::clone(&control), agent.clone())),
     };
+    // Herdr keeps a state per pane. Wrapping the link is what keeps that state
+    // honest for a *remote* agent too: the messages never touch this node's
+    // controller, so nothing downstream of it could report them.
+    let (link, herdr) = report::attach(link, &agent);
     println!("pane:        {}", link.describe());
+    println!("herdr:       {herdr}");
 
     // Spawned, and its ending is not the node's ending. A node serving agents
     // for other peers has nobody at its pane and may have a closed stdin from

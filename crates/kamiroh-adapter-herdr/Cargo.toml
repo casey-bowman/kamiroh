@@ -15,7 +15,14 @@ thiserror.workspace = true
 # `io-util` for the line reader; `io-std` so the composition root can hand this
 # the real stdin. Nothing here knows about Herdr's socket API — a pane is a
 # terminal, and this crate only needs the two ends of it.
-tokio = { workspace = true, features = ["io-util", "io-std"] }
+tokio = { workspace = true, features = ["io-util", "io-std", "net"] }
+# Herdr's socket API is JSON that Herdr defines. Slice F2 hand-wrote its codec
+# to keep serde out of `kamiroh-domain`, and that reasoning does not transfer:
+# this is adapter-local, the response shape is someone else's to change, and the
+# pane id arrives from the environment unvalidated, so it must be escaped by
+# something that knows the rules. `serde` is already in the tree via iroh.
+serde_json = "1"
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "macros", "io-util", "net"] }
+tempfile = "3"

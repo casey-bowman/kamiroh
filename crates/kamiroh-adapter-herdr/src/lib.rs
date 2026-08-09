@@ -24,18 +24,22 @@
 //! - [`RemoteLink`] calls `Transport`, so the agent may be anywhere the
 //!   allowlist at the far end permits.
 //!
-//! # Nothing here knows about Herdr
+//! # The console does not know about Herdr; the reporter does
 //!
 //! A pane is a terminal: input arrives on stdin, output goes to stdout. That is
-//! the entire integration surface this crate needs, which is why it takes an
-//! `AsyncBufRead` and an `AsyncWrite` rather than naming Herdr anywhere.
+//! the entire surface [`console`] needs, which is why it takes an
+//! `AsyncBufRead` and an `AsyncWrite` and is tested with a string and a
+//! `Vec<u8>`.
 //!
-//! Herdr *does* have a socket API — newline-delimited JSON on
-//! `$HERDR_SOCKET_PATH`, with `pane.report_agent` for pushing an agent's state
-//! into the pane list. Reporting kamiroh's `AgentStatus` that way is a real
-//! integration and a separate slice: it is outbound, it needs a JSON client,
-//! and it is not a front. Keeping it out of here is what lets this crate be
-//! tested with a string as its input and a `Vec<u8>` as its output.
+//! [`report`] is the half that does know. Herdr keeps a state per pane, and
+//! [`report::attach`] wraps a [`Link`] so that driving an agent updates it —
+//! `working` while a prompt runs, `idle` when it lands. It speaks Herdr's local
+//! socket API ([`client`]): newline-delimited JSON on `$HERDR_SOCKET_PATH`,
+//! method `pane.report_agent`.
+//!
+//! Outside a pane, `attach` returns the link untouched. kamiroh runs outside
+//! Herdr as a matter of course, and reporting is never allowed to delay a
+//! control message or fail one.
 //!
 //! ```no_run
 //! use std::sync::Arc;
@@ -63,5 +67,13 @@
 
 pub mod console;
 pub mod link;
+pub mod pane;
+pub mod report;
+
+/// Herdr's local socket API. Unix only — elsewhere it is a named pipe.
+#[cfg(unix)]
+pub mod client;
 
 pub use link::{Link, LinkError, LocalLink, RemoteLink};
+pub use pane::{Pane, PaneAgentState};
+pub use report::ReportingLink;

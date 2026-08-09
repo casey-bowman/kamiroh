@@ -2,23 +2,96 @@
 
 ## Current phase
 
-Foundation. Slices **A** (workspace + ARCHITECTURE.md), **B** (port traits),
-**E** (filesystem key custody), **F1** (real endpoint identity), **F2** (the
-Iroh transport and front) and **G** (the Kameo controller) are complete.
+**The lettered plan is finished.** A→J are all complete.
 
-**H fell out of G rather than needing its own slice.** The plan has H wiring
-E+F+G into one process, but each of those slices ended by swapping its own
-constructor into the composition root, so by the end of G the binary already
-holds a real key store, a real transport and front, and real controller actors.
-There is nothing left for H to do; the wiring it describes is
-`crates/kamiroh/src/main.rs` as it stands. Recorded here rather than silently
-skipped.
+| | slice | what it left behind |
+|---|---|---|
+| A/B | workspace, port traits | the crate graph and the boundary |
+| C/D | domain, app | folded into A/B rather than run separately |
+| E | `kamiroh-adapter-fs` | key custody on disk |
+| F1 | `kamiroh-adapter-iroh` | real endpoint identity |
+| F2 | `kamiroh-adapter-iroh` | codec, transport, inbound front |
+| G | `kamiroh-adapter-kameo` | one controller actor per agent |
+| H | — | **absorbed**: each slice wired itself in as it landed |
+| I | `kamiroh-adapter-fs` | the allowlist file |
+| J1 | `kamiroh-adapter-herdr` | the pane console, local or remote |
+| J2 | `kamiroh-adapter-herdr` | agent state reported into Herdr |
 
-**Every driven port has a real adapter, and the lettered slices are done bar
-J2.** A→I complete; J split into J1 (the pane console, done) and J2 (reporting
-agent state into Herdr, next).
+Two slices were split (F, J) and one dissolved (H) — each recorded where it
+happened rather than quietly.
+
+Every driven port resolves to an adapter that touches the world.
+`kamiroh-adapter-memory` is now test doubles plus one production caller:
+`InMemoryAllowlist`, for the `KAMIROH_ALLOW` override.
+
+**The one stand-in left is the agent itself.** `EchoAgent` returns its prompt.
+Everything underneath it — identity, allowlist, transport, front, controller
+actors, console — is real. See *Next slice*.
 
 ## Done
+
+**Slice J2 — reporting the pane's agent state to Herdr**
+
+kamiroh now tells Herdr what its agent is doing, so a pane shows `working` while
+a prompt runs and `idle` when it lands. Herdr's local socket API, method
+`pane.report_agent`, over `$HERDR_SOCKET_PATH`.
+
+**It decorates `Link`, not `AgentController` — the opposite of what this file
+said to do.** The plan here was a decorator over the controller port, which sees
+every message any front delivers. That is wrong for the case J1 exists for: a
+pane driving an agent on another node never touches the local controller, so the
+controller decorator would report nothing precisely when there is something to
+report. A pane's state is the state of the agent *that pane is bound to*, which
+is what `Link` names. Decorating it covers local and remote uniformly and
+changes no port.
+
+**Two things the documentation did not say, found by experiment.**
+
+1. **Herdr answers one request per connection, then closes it.** Three `ping`s
+   written to one socket produce one response, not three. The first
+   implementation held a connection open, which worked for the opening report
+   and then failed forever with `Broken pipe`. Each report now opens its own
+   connection — no waste worth caring about, since state changes at human speed.
+2. **The error codes are more specific than the docs suggest.** A bogus method
+   gives `invalid_request` ("unknown variant"), a missing field gives
+   `invalid_request` ("missing field `source`"), and a bad pane gives
+   `pane_not_found`. That they are *distinct* is what makes a `pane_not_found`
+   reply positive evidence: the method name and the whole required parameter set
+   were accepted, and only the pane was wrong.
+
+Settled before writing:
+
+- **Reporting never delays or fails a control message.** Bounded channel,
+  `try_send`, drop when full. A sidebar label is not worth a slower prompt, and
+  Herdr being down is not a reason for kamiroh to stop working.
+- **Absence is normal.** No `HERDR_PANE_ID` → the link is returned untouched and
+  the startup line says so. kamiroh runs outside Herdr as a matter of course.
+- **Asking does not change the answer.** Only a prompt reports `working` first;
+  `/status` must not briefly claim the agent is busy just by being asked.
+- **A failure reports `unknown`, not `idle`.** An unreachable peer says nothing
+  about the agent behind it.
+- **`Starting → unknown`, not `idle`.** "Idle" invites someone to prompt an
+  agent that is not ready. Dead today: `KameoController` spawns actors idle.
+- **Nothing maps to Herdr's `blocked`** ("waiting on a human"). No kamiroh agent
+  waits on input yet; when one does, that is where it surfaces.
+- **`serde_json`, adapter-local.** F2's hand-written codec was about keeping
+  `kamiroh-domain` dependency-free for a protocol kamiroh *defines*. This is
+  someone else's JSON, and the pane id arrives from the environment unvalidated,
+  so it must be escaped by something that knows the rules.
+
+**A mistake worth recording, because it touched a live system.** The demo
+scripts inherited `HERDR_*` from the session running them — which is inside a
+real Herdr pane — so the first run had test nodes reporting into the pane being
+worked in. The scripts now `unset` those variables. Anything spawned from a
+session inside a tool's environment inherits that environment; a demo must not
+touch a live session.
+
+Verified by 19 unit tests against a fake socket that closes after each response
+(the shape that would have caught the connection bug), and against the **real
+`herdr 0.8.0` daemon** by reporting to a deliberately non-existent pane —
+which exercises socket resolution, framing, method routing and parameter
+validation without altering a live session. The success path against the real
+daemon is the one thing not exercised, since it would relabel a real pane.
 
 **Slice J1 — the pane console**
 
@@ -277,7 +350,7 @@ exit path, since a stranded one is a live secret loose in the key directory.
 ```
 cargo fmt --all --check                        # clean
 cargo clippy --workspace --all-targets -- -D warnings   # zero warnings
-cargo test  --workspace                        # 132 passed, 0 failed (as of J1)
+cargo test  --workspace                        # 151 passed, 0 failed (as of J2)
 cargo tree  -p kamiroh-domain -e normal        # no dependencies at all
 cargo tree  -p kamiroh-ports  -e normal        # kamiroh-domain + async-trait + thiserror only
 cargo tree  -i kameo -e normal                 # exactly one consumer: kamiroh-adapter-kameo
@@ -286,8 +359,11 @@ cargo tree  -i iroh-base -e normal             # exactly one consumer: kamiroh-a
 # A *transport* adapter appearing here is a bug.
 grep -rn local_front crates/ --include='*.rs'
 
-# Needs sockets, so it runs outside the sandbox:
-cargo test -p kamiroh-adapter-iroh --test two_nodes
+# Need sockets, so these run OUTSIDE the sandbox. The Herdr client tests bind a
+# Unix socket, which the sandbox denies with "Operation not permitted" — that is
+# the sandbox, not a bug.
+cargo test -p kamiroh-adapter-iroh  --test two_nodes
+cargo test -p kamiroh-adapter-herdr
 
 # The key-store race is timing-dependent — one green run proves nothing.
 for i in $(seq 1 30); do cargo test -p kamiroh-adapter-fs || echo "FAIL $i"; done
@@ -335,6 +411,13 @@ fooled this way.
 | Console lifetime | Spawned; its end is not the node's | A serving node has nobody at its pane and may start with a closed stdin. |
 | Prompt string | Caller's choice, `""` for none | A tty echoes the newline; piped input does not, so a per-line prompt stacked on one line. |
 | Herdr coupling | None in J1 | A pane is a terminal. Taking `AsyncBufRead`/`AsyncWrite` keeps the crate testable without Herdr installed. |
+| Reporting hook | Decorate `Link`, not `AgentController` | A pane driving a *remote* agent never touches the local controller, so a controller decorator reports nothing in the case that matters. |
+| Herdr connections | One per report | Herdr closes after each response. A held connection succeeds once, then fails forever. Found by experiment, not documented. |
+| Report backpressure | Bounded channel, drop when full | A sidebar label must never slow a prompt or fail one. |
+| Herdr absent | Silent no-op, one startup line | kamiroh runs outside Herdr as a matter of course; that is not a degraded mode. |
+| `Starting` state | `unknown`, not `idle` | "Idle" invites prompting an agent that is not ready. |
+| Failed send | `unknown`, not `idle` | An unreachable peer says nothing about the agent behind it. |
+| `serde_json` | Adapter-local, accepted | Herdr's JSON is Herdr's to change, and the pane id is unvalidated environment input needing real escaping. |
 
 ## Advisor consultations
 
@@ -415,57 +498,34 @@ fooled this way.
 
 ## Next slice
 
-**J2 — report agent state into Herdr.** The last lettered slice. kamiroh knows
-each agent's `AgentStatus`; Herdr shows a state per pane. Pushing the first into
-the second is what makes a kamiroh pane legible in a Herdr session at a glance.
+**The lettered plan is finished.** A→J are done. What follows was deferred by
+the plan rather than specified by it, so this is a planning decision, not a
+queue to work through in order.
 
-Done when a pane running kamiroh shows its agent as working while a prompt runs
-and idle when it finishes, in Herdr's own pane list.
+The candidates, most valuable first as they look from here:
 
-**Ground truth, taken from the installed binary rather than the docs site** —
-`herdr 0.8.0`, via `herdr api schema --json`:
+1. **A real agent runtime behind `Agent`.** Everything below the console is
+   real: identity, allowlist, transport, front, controller actors. What an
+   agent *does* is still `EchoAgent`. This is the last stand-in in the system
+   and the only one a user would notice. `Agent::run` is already the seam, and
+   its cancel-safety contract is already written down.
+2. **Reporting for serving nodes.** J2 covers a pane driving an agent. A node
+   whose agent is driven by a *remote* peer shows nothing, because inbound
+   messages arrive through the Iroh front rather than any `Link`. That is the
+   `AgentController` decorator after all, as a second reporter —
+   `pane.report_agent` takes an optional `seq` for ordering two sources on one
+   pane.
+3. **An allowlist reload trigger.** `FileAllowlist::reload()` exists, is tested,
+   and has no caller. A signal handler or a `/reload` console command would give
+   it one. The atomic swap — the hard part — is done.
+4. **The review queue**, which has been accumulating since F2 and is the only
+   item here that is about existing code rather than new code. See *Advisor
+   consultations*: the F2 enumeration argument, malformed-is-fatal in I, `Agent`
+   as an adapter trait, the bounded-mailbox reasoning in G.
 
-```
-method:  pane.report_agent
-params:  { pane_id, source, agent, state }        # required
-         { agent_session_id, agent_session_path, message, seq }   # optional
-state:   "idle" | "working" | "blocked" | "done" | "unknown"
-socket:  $HERDR_SOCKET_PATH, else ~/.config/herdr/herdr.sock
-wire:    newline-delimited JSON, {"id":..,"method":..,"params":{..}}
-         -> {"id":..,"result":{..}} | {"id":..,"error":{"code":..,"message":..}}
-env:     HERDR_ENV=1, HERDR_PANE_ID, HERDR_WORKSPACE_ID, HERDR_TAB_ID
-```
-
-Re-run `herdr api schema --json` rather than trusting the above; it is a
-snapshot of one version.
-
-**The decisions to settle first:**
-
-- **How state is observed.** The `AgentController` port has no subscription, and
-  it should not grow one for this. A decorator implementing `AgentController` and
-  wrapping the Kameo one sees every message and reply, so it can report
-  `working` before delegating and the resulting state after — no port change.
-  Check that against the alternative before committing to it.
-- **The mapping.** `Idle → idle`, `Busy → working`, `Stopped → done` are
-  obvious. `AgentStatus::Starting` is not: `unknown` is honest, `idle` reads
-  better in a sidebar. kamiroh has nothing that maps to Herdr's `blocked`, since
-  no agent currently waits on human input — worth stating so the gap is a
-  decision rather than an oversight.
-- **A JSON dependency.** kamiroh has no serde in the tree today and
-  `kamiroh-domain` is still dependency-free. `serde_json` in the Herdr adapter
-  alone does not threaten that, but it is the first JSON in the workspace and
-  the reason should be written down.
-- **What happens when Herdr is not there.** No `HERDR_ENV`, no socket, or a
-  socket that refuses: reporting must be a silent no-op, never a startup
-  failure. kamiroh runs outside Herdr as a matter of course.
-
-Consult the advisor before J2 lands only if the decorator approach changes a
-port; otherwise it is not an architecture boundary.
-
-**Beyond the plan.** After J2 the lettered slices are done, and what is left is
-what the plan deferred rather than specified: a real agent runtime behind
-`Agent`, an allowlist reload trigger, and whatever the `ControllerError::Rejected`
-nit below turns into. Worth a fresh planning pass rather than inventing K.
+Worth a fresh planning pass rather than inventing K, L, M. The lettered slices
+worked because they came from one plan written up front; picking the next four
+off a list is not the same thing.
 
 ## Known nits (not worth their own commit)
 
@@ -525,6 +585,11 @@ cache, so slice G needed no network at all.
   without its entry and the gap was only noticed a slice later, at which point
   the details had to be recovered from the diff. The plan's step 7 is "write
   LOOP.md + commit", in that order.
+- **Anything spawned from a session inside Herdr inherits `HERDR_*`.** The demo
+  scripts started nodes that reported their agent state into the *real* pane
+  being worked in, because `HERDR_PANE_ID` was in the environment. They now
+  `unset` it. The general form: a demo run from inside a live tool inherits that
+  tool's environment, and a demo must not touch a live session.
 - The two-process demo lives in the session scratchpad, not the repo. It reads
   `endpoint id:` and `listening:` out of each node's stdout, and both fields
   have bitten it: the id is the *third* whitespace field, and the node binds a
