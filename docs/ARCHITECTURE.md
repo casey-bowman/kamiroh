@@ -393,6 +393,9 @@ Enforced by `kamiroh-adapter-herdr` and pinned by its tests:
   on one connection produce one response. Holding a connection open succeeds
   once and then fails forever with a broken pipe. Established by experiment
   against `herdr 0.8.0`, not from its documentation.
+- **Nothing on the startup path may block on a peer.** `greet` is spawned rather
+  than awaited: an unreachable peer costs the full dial timeout, and a pane that
+  cannot be typed at for 16 seconds is worse than one that reports its trouble.
 
 Two mapping gaps, both decisions rather than oversights. `AgentStatus::Starting`
 maps to `unknown` rather than `idle`, since a sidebar reading "idle" invites

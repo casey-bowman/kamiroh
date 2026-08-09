@@ -87,11 +87,28 @@ session inside a tool's environment inherits that environment; a demo must not
 touch a live session.
 
 Verified by 19 unit tests against a fake socket that closes after each response
-(the shape that would have caught the connection bug), and against the **real
-`herdr 0.8.0` daemon** by reporting to a deliberately non-existent pane —
-which exercises socket resolution, framing, method routing and parameter
-validation without altering a live session. The success path against the real
-daemon is the one thing not exercised, since it would relabel a real pane.
+(the shape that would have caught the connection bug), and then end to end
+against the **real `herdr 0.8.0` daemon** in a scratch pane split for the
+purpose and closed again afterwards:
+
+```
+fresh pane                      agent=null     agent_status="unknown"
+kamiroh's opening report        agent="agent"  agent_status="idle"
+prompting an unreachable peer   agent="agent"  agent_status="working"
+```
+
+The `working` observation is the one that needed setting up: with `EchoAgent` a
+local prompt finishes too fast to catch, so the pane was pointed at a peer that
+does not exist and the state was polled while the dial ran.
+
+**That attempt found a real wart, in code older than the slice.** `greet()` —
+the startup reachability smoke from F2 — was awaited before the console was
+built, so an unreachable peer blocked startup for the full dial timeout, 16
+seconds measured. Harmless when the binary was a server; not harmless now that
+a person opens a pane and waits at it. A laptop whose home node is asleep would
+look hung rather than offering the prompt where `/status` explains the problem.
+`greet` is now spawned. The two-node demo waits on the `peer ` line rather than
+`serving`, since the two are no longer ordered.
 
 **Slice J1 — the pane console**
 
@@ -418,6 +435,7 @@ fooled this way.
 | `Starting` state | `unknown`, not `idle` | "Idle" invites prompting an agent that is not ready. |
 | Failed send | `unknown`, not `idle` | An unreachable peer says nothing about the agent behind it. |
 | `serde_json` | Adapter-local, accepted | Herdr's JSON is Herdr's to change, and the pane id is unvalidated environment input needing real escaping. |
+| Startup `greet` | Spawned, not awaited | An unreachable peer costs the full dial timeout (16s measured), and awaiting it holds up the console a person is waiting at. |
 
 ## Advisor consultations
 

@@ -114,7 +114,15 @@ async fn run() -> Result<(), Box<dyn Error>> {
     local_smoke(control.as_ref(), &agent).await?;
 
     if let Some((peer_id, _)) = &peer {
-        greet(transport.as_ref(), *peer_id, &agent).await;
+        // Spawned, not awaited. An unreachable peer takes the full dial timeout
+        // — 16 seconds, measured — and awaiting it here holds up the pane
+        // console, which is the thing a person is actually waiting for. A
+        // laptop whose home node is asleep would look hung rather than offering
+        // a prompt where `/status` explains the problem.
+        let transport = Arc::clone(&transport);
+        let agent = agent.clone();
+        let peer_id = *peer_id;
+        tokio::spawn(async move { greet(transport.as_ref(), peer_id, &agent).await });
     }
 
     // --- The pane console ---------------------------------------------------
