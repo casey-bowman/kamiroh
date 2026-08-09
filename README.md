@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="kamiroh.jpg" alt="kamiroh" width="420">
+</p>
+
 # kamiroh
 
 Kameo actors for agents over Iroh
