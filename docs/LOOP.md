@@ -1017,8 +1017,9 @@ cache, so slice G needed no network at all.
   being worked in, because `HERDR_PANE_ID` was in the environment. They now
   `unset` it. The general form: a demo run from inside a live tool inherits that
   tool's environment, and a demo must not touch a live session.
-- The two-process demo lives in the session scratchpad, not the repo. It reads
-  `endpoint id:` and `listening:` out of each node's stdout, and both fields
-  have bitten it: the id is the *third* whitespace field, and the node binds a
-  wildcard (`0.0.0.0:PORT`), not loopback. If it is worth keeping, it belongs in
-  the repo next to the integration tests rather than being rewritten each time.
+- **The demos are in the repo now**, under `demos/`, with a README recording
+  what each shows and the traps that cost a debugging round apiece — the
+  wildcard bind, the third whitespace field, inherited `HERDR_*`, one request
+  per Herdr connection, and rebuilding before running. They used to live in a
+  session scratchpad and be rewritten from memory each time, which is how those
+  traps kept being rediscovered.
