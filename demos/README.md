@@ -30,6 +30,26 @@ Nothing here needs Perl or Python. An earlier version used
 were written in blocked a foreground `sleep` — a quirk of that harness, not of
 the task, and not something to inflict on a reader.
 
+### The `nc -U` dependency should go, and there is an obvious way
+
+These scripts hand-roll Herdr's newline-JSON protocol over `nc -U` and parse it
+with `jq`. **Herdr ships a CLI that does all of it** — `herdr pane split`,
+`herdr agent start`, `herdr pane get`, `herdr agent read`, `herdr pane close`
+all exist and cover every call made here. Using it would drop `nc` entirely,
+drop most `jq`, work wherever Herdr does — which these scripts require anyway —
+and stop reimplementing someone else's wire format in bash.
+
+Worth recording the wrong turn as well as the right one: the tempting fix is to
+have the demos use *kamiroh's* Herdr client instead. That is a trap. The calls
+they need are pane management — split, start, close — which kamiroh deliberately
+does not do, and exposing them would push it toward being a worse Herdr. That is
+a stated non-goal in `docs/kamiroh-phase-3.md`, and M3 confirmed attach-only was
+right. The scaffolding is the test harness's business, not kamiroh's.
+
+Not urgent: `nc -U` works on macOS and on Linux with `netcat-openbsd`. It
+matters when someone on a Nix or minimal Linux box first tries to reproduce a
+claim, and it is a small, well-defined change whenever that becomes real.
+
 ```bash
 cargo build --workspace
 ./demos/two_node_demo.sh
