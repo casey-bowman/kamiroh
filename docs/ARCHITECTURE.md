@@ -58,7 +58,7 @@ cargo check --workspace --all-targets    # must be warning-free
 | `kamiroh-ports` | Port traits + per-port error types | domain, `async-trait`, `thiserror` |
 | `kamiroh-app` | Use cases against ports | domain, ports, `async-trait` |
 | `kamiroh-adapter-memory` | In-memory implementation of every driven port | domain, ports, `async-trait` |
-| `kamiroh-adapter-fs` | Node key custody on disk | domain, ports, `async-trait`, `getrandom` |
+| `kamiroh-adapter-fs` | Node key custody and the allowlist, on disk | domain, ports, `async-trait`, `getrandom`, `thiserror` |
 | `kamiroh-adapter-iroh` | Endpoint identity (F1); peer transport and inbound front (F2) | domain, ports, `iroh-base`, `iroh` |
 | `kamiroh-adapter-kameo` | One controller actor per agent | domain, ports, `async-trait`, `tokio`, `kameo` |
 | `kamiroh` | Composition root (binary) | all of the above, `tokio` |
@@ -236,13 +236,18 @@ was **deleted** in F1 rather than left unused: a fake key derivation sitting in 
 test-double crate is available to be called by mistake. `InMemoryKeyStore` still
 exists as a test double but no longer backs the binary.
 
-**Still in-memory:** the allowlist, which gains a real config source in I. The
-transport and front became real in F2, the controller in G.
+**Nothing is in-memory any more.** Key custody became real in E, the transport
+and front in F2, the controller in G, and the allowlist in I. Every driven port
+now resolves to an adapter that touches the world.
 
-`EchoController` survives as a test double for front tests, which want a
-controller that answers immediately and needs no runtime. Note what it cannot
-do: holding agent state in a map, it can never report `AgentStatus::Busy`, so a
-test that needs an agent genuinely at work belongs with the Kameo adapter.
+`kamiroh-adapter-memory` is therefore a test-double crate and nothing else.
+`EchoController` survives for front tests, which want a controller that answers
+immediately and needs no runtime; note what it cannot do — holding agent state
+in a map, it can never report `AgentStatus::Busy`, so a test that needs an agent
+genuinely at work belongs with the Kameo adapter. `InMemoryAllowlist` has one
+remaining production caller: the composition root uses it for the
+`KAMIROH_ALLOW` override, where the set comes from an env var and there is no
+file to re-read.
 
 ## 6a. Key custody rules
 
@@ -269,7 +274,47 @@ Enforced by `kamiroh-adapter-fs` and pinned by its tests:
 
 ---
 
-## 6b. Controller actor rules
+## 6b. Allowlist custody rules
+
+Enforced by `kamiroh-adapter-fs` and pinned by its tests. Set against §6a on
+purpose — the two files sit in the same directory and their rules are **not**
+the same, because what they protect is not the same:
+
+| | `node.key` | `allow` |
+|---|---|---|
+| Contents | A secret | Public keys |
+| Readable by others | ✗ refused | ✓ fine |
+| Writable by others | ✗ refused | ✗ refused |
+| Corrupt file | Reported, never replaced | Reported, node refuses to start |
+| Absent file | Created | Means "admit nobody" |
+
+- **Secrecy is not the property; integrity is.** Demanding `0600` on an
+  allowlist would be theatre: the contents are public keys, and it would only
+  make the file harder to inspect. Group- or other-*writable* is refused on both
+  the file and its directory, because an account that can append a line — or
+  swap the file — can admit itself to this node.
+- **Permissions are checked before contents.** A file anyone can rewrite is not
+  evidence of anything, so there is no point parsing it first. Pinned by
+  `permissions_are_checked_before_contents`.
+- **A malformed file is fatal, and a partial list is never used.** One bad line
+  rejects the whole file. The allowlist is the trust boundary, so a file that
+  cannot be fully understood means the operator's intent is unknown — and both
+  ways of guessing are wrong. Admitting the lines that did parse enforces a
+  policy nobody wrote; admitting nobody while looking healthy hides the mistake
+  behind what appears to be a network problem.
+- **An absent file is not a failure.** It means what an empty one means: admit
+  nobody. That is the deny-by-default §3 requires, and it is the state of a
+  fresh node before anyone configures it.
+- **The startup line always names the source.** With `KAMIROH_ALLOW` overriding
+  the file, the failure worth designing against is an operator editing a file
+  the node never read.
+- **A failed reload changes nothing.** The file is parsed before the write lock
+  is taken, so the previously loaded set survives and the error is returned
+  rather than swallowed. The adapter does not choose between the two risks —
+  retaining a stale list can miss a revocation, emptying one locks out every
+  peer over a typo — because only the caller knows which it is running.
+
+## 6c. Controller actor rules
 
 Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 
@@ -310,7 +355,7 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
 | | | Both obligations held. The enumeration one holds **by ordering, not by collapsing codes**: `REFUSED` and `NO_SUCH_ACTOR` are distinct on the wire, but authorisation runs before the actor is looked up, so an unlisted peer gets byte-identical `REFUSED` whether or not the agent it names exists. The distinction only ever reaches a peer already trusted. Pinned by `an_unlisted_peer_learns_nothing_beyond_refused`. |
 | | | `Origin` is built from the connection's authenticated peer; `grep -rn local_front crates/` still shows the composition root as the only caller. |
 | ~~G~~ | `kamiroh-adapter-kameo` | ✅ done — `AgentController`, replacing `EchoController` in the binary |
-| I | allowlist config source | `Allowlist` — replaces the in-memory list |
+| ~~I~~ | `kamiroh-adapter-fs` | ✅ done — `Allowlist` from a file, replacing the list the composition root built from an env var |
 | J | `kamiroh-adapter-herdr` | A second front calling the same `ControlApi` |
 
 Each is a constructor swap in `crates/kamiroh/src/main.rs`. No slice above should

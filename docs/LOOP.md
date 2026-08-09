@@ -14,9 +14,64 @@ There is nothing left for H to do; the wiring it describes is
 `crates/kamiroh/src/main.rs` as it stands. Recorded here rather than silently
 skipped.
 
-Only the allowlist (**I**) is still in-memory, and **J** (Herdr) is untouched.
+**Every driven port now has a real adapter.** Only **J** (Herdr, a second front)
+remains of the planned slices.
 
 ## Done
+
+**Slice I — the allowlist file**
+
+`FileAllowlist` in `kamiroh-adapter-fs`, beside the key store: one endpoint id
+per line, `#` comments, blank lines ignored. The `Allowlist` port did not
+change — it is still a synchronous, infallible `bool` — because loading is a
+separate act from checking, so the load errors are adapter-local.
+
+**Its custody rules are deliberately not the key store's**, and the contrast is
+the interesting part of the slice. A node secret is secret; an allowlist is
+public keys. Demanding `0600` on it would be theatre that only makes the file
+harder to inspect. What matters is *integrity*: group- or other-writable is
+refused on both the file and its directory, since an account that can append a
+line can admit itself. Permissions are checked before contents, because a file
+anyone can rewrite is not evidence of anything.
+
+Settled before writing:
+
+- **Malformed is fatal; a partial list is never used.** One bad line rejects the
+  whole file. Both ways of guessing are wrong: admitting the lines that parsed
+  enforces a policy nobody wrote, and admitting nobody while looking healthy
+  hides the mistake behind what looks like a network problem.
+- **Absent is not malformed.** A missing file means what an empty one means —
+  admit nobody. That is the port's deny-by-default, and the state of a fresh
+  node.
+- **`KAMIROH_ALLOW` survives as an outright override**, which is what keeps the
+  two-process demo and multi-node local testing working. The startup line names
+  the source either way; an operator editing a file the node never read is the
+  failure worth designing against.
+- **`reload()` ships, a trigger does not.** The atomic swap under the lock is
+  the part that is hard to retrofit; a trigger — signal, file watch, Herdr
+  command — is not. A failed reload keeps the previous set *and* returns the
+  error, because retaining a stale list can miss a revocation while emptying one
+  locks out every peer over a typo, and only a caller knows which risk it runs.
+
+**A defect the slice exposed, in code older than the slice.** A
+`Result`-returning `main` prints the error's `Debug`, so the first run of the
+refusal path produced `Error: Malformed { path: "...", line: 2, entry:
+"truncated-id", source: Length { got: 12 } }` — a struct dump, with the
+carefully written sentence nowhere in sight. "Refuse to start" is worth exactly
+as much as the reason it gives. `main` now returns `ExitCode` and prints
+`Display`:
+
+```
+kamiroh: allowlist /…/allow line 2: "truncated-id" is not an endpoint id:
+         endpoint id must be 64 hex characters, got 12
+```
+
+Only the top level is printed, no source chain: every error type here already
+embeds its source in its own message, so walking the chain would print it twice.
+
+Verified by 15 new unit tests and a six-case run of the real binary — file with
+peers, file absent, file of only comments, env override, malformed file, and
+world-writable file — checking both the `allowing:` line and the exit code.
 
 **Slice G — the Kameo controller**
 
@@ -166,7 +221,7 @@ exit path, since a stranded one is a live secret loose in the key directory.
 ```
 cargo fmt --all --check                        # clean
 cargo clippy --workspace --all-targets -- -D warnings   # zero warnings
-cargo test  --workspace                        # 102 passed, 0 failed (as of G)
+cargo test  --workspace                        # 117 passed, 0 failed (as of I)
 cargo tree  -p kamiroh-domain -e normal        # no dependencies at all
 cargo tree  -p kamiroh-ports  -e normal        # kamiroh-domain + async-trait + thiserror only
 cargo tree  -i kameo -e normal                 # exactly one consumer: kamiroh-adapter-kameo
@@ -209,6 +264,13 @@ fooled this way.
 | Concurrent prompts | Refused, not queued | The mailbox would queue them, but silently serialising makes `Busy` a lie — the caller cannot tell queued from running. |
 | Stopping an actor | From a spawned task, plus an explicit `Stopped` state | The mailbox is bounded, so awaiting `stop_gracefully()` inside a handler can deadlock the actor against itself; the explicit state then keeps the answer independent of stop timing. |
 | `kameo` features | `default-features = false` | `remote` pulls libp2p, and a second p2p stack invites routing agent traffic over the wrong one. `macros` and `tracing` are unused. |
+| Allowlist home | `kamiroh-adapter-fs`, beside the key store | It is a file, and that crate is the filesystem adapter. A new crate would exist only to hold one type. |
+| Allowlist permissions | Writable refused, readable fine | Public keys need integrity, not secrecy. A `0600` allowlist would be theatre that makes the file harder to inspect. |
+| Malformed allowlist | Fatal, never partial | Both guesses are wrong: a partial list enforces a policy nobody wrote; a silent empty one looks like a network fault. |
+| Absent allowlist | Deny everyone, not an error | Same meaning as an empty file, and the state of a fresh node. |
+| `KAMIROH_ALLOW` | Kept as an outright override | Explicit beats ambient, and the two-process demo and multi-node local testing depend on it. |
+| Reload | `reload()` now, trigger later | The atomic swap is hard to retrofit; a signal or watch is not. A failed reload retains and reports rather than choosing a risk for the caller. |
+| `main`'s return | `ExitCode`, printing `Display` | A `Result`-returning `main` prints `Debug`, so every refusal-to-start message was a struct dump. |
 
 ## Advisor consultations
 
@@ -259,51 +321,74 @@ fooled this way.
   argument in F2 (it rests on ordering, so it breaks quietly if authorisation
   and lookup are ever reordered), then `Agent` as an adapter trait, then the
   bounded-mailbox reasoning in G.
+- **Slice I — flagged at the gate, before the design was fixed, and still not
+  consulted.** The improvement over F2/G is only in timing: the four decisions
+  (fatal-on-malformed, absent-is-empty, env override, reload scope) were put up
+  as explicit alternatives with their trade-offs *before* anything was written,
+  rather than justified afterwards. That is what the plan's step 3 is for, and
+  it is the closest a single session gets to the gate on its own.
+
+  Add to the review queue, above the G items: whether **malformed-is-fatal** is
+  the right call. It is the one decision here that can take a running fleet
+  down — a bad edit to a config-managed file stops every node that restarts —
+  and the alternative (start, admit nobody, complain loudly) is defensible in a
+  way the other three alternatives are not.
 
 ## Next slice
 
-**I — a real allowlist source.** The last in-memory adapter. Today the
-composition root parses `KAMIROH_ALLOW` itself and hands the result to
-`InMemoryAllowlist`, which means the node's security policy is an env var
-assembled in `main`.
+**J — the Herdr front**, the last planned slice: a second front holding the same
+`Arc<dyn ControlApi>` as the Iroh front. That sharing is the claim the
+architecture has been making since slice A — "several fronts, one controller
+actor" — and J is the first thing that actually tests it, because until now
+there has only ever been one front.
 
-Done when the allowlist comes from a durable, editable source and an unlisted
-peer is still refused — the F2 two-process demo is the check, since it already
-exercises both directions.
+Done when a local Herdr front drives the same agent the Iroh front drives, and
+the two reach the same controller actor rather than two copies of one.
 
-**The decision to settle first:** whether the allowlist is *reloadable*. The
-`Allowlist` port is a synchronous, infallible `bool` (slice B), chosen because
-set membership is not an IO operation and a fallible check invites treating an
-error as "allow". That reasoning still holds and the port should not change — so
-reloading has to happen behind it, with the file watched or re-read on a signal
-and the result swapped atomically. Decide whether I takes that on or ships
-load-at-startup and leaves reload to its own slice. Prefer the latter unless
-reload is cheap: a half-done reload path is worse than none.
+**The decision to settle first:** what a Herdr front *is* here. The plan calls J
+a "stub — port exists", which was written when no front existed at all. Now that
+`front::serve` is real, a stub proves nothing the Iroh front does not already
+prove. Decide between a genuine second front (a local socket or stdio protocol,
+which is real work) and a deliberately minimal in-process one whose whole job is
+to demonstrate the shared handle. The second is honest if it is *labelled* — the
+trap is a stub that reads as a Herdr integration.
 
 Also worth settling:
 
-- Where the file lives, and whether a missing file means "deny everyone" (the
-  current `KAMIROH_ALLOW`-unset behaviour) or is an error. Silent deny-all is
-  safe but debugging it is miserable; the startup line should say which it did.
-- Whether `KAMIROH_ALLOW` survives as an override. Keeping it makes the demo
-  script and multi-node local testing keep working.
-- The file's permissions are worth a thought but not the key store's treatment:
-  an allowlist is public keys, so it is integrity-sensitive, not secret.
+- `Origin::local_front()` has never been called by an adapter, only by the
+  composition root's smoke path. A Herdr front is exactly the case it was
+  designed for, so J is where that constructor finally earns its existence — and
+  where the "no adapter calls `local_front`" check stops being the right check.
+  Decide what replaces it: probably "only the Herdr adapter may".
+- Whether the Herdr front can reload the allowlist. `FileAllowlist::reload()`
+  exists and has no caller; a local, already-trusted front is a plausible first
+  one, and cheaper than a signal handler.
 
-Consult the advisor before I lands: the allowlist is a security-sensitive path.
+Consult the advisor before J lands: it moves the local-trust boundary, which is
+the security-sensitive part.
 
-**Then J — the Herdr front**, the last planned slice: a second front holding the
-same `Arc<dyn ControlApi>` as the Iroh front. That sharing is the claim the
-architecture has been making since slice A ("several fronts, one controller
-actor") and J is what tests it.
+**Beyond the plan.** After J the lettered slices are done, and what is left is
+what the plan deferred rather than specified: a real agent runtime behind
+`Agent`, a reload trigger, and whatever the `ControllerError::Rejected` nit
+below turns into. Worth a fresh planning pass rather than inventing K.
 
 ## Known nits (not worth their own commit)
 
 - `FileKeyStore::default_path()` returns `KeyStoreError::Malformed` when neither
   `XDG_CONFIG_HOME` nor `HOME` is set. Nothing is malformed there — the
-  environment is unconfigured — and it will read as a corrupt-key-file error to
-  whoever hits it. `Missing` fits better. F came and went without touching that
-  file; fix it whenever something next does.
+  environment is unconfigured — and it reads as a corrupt-key-file error to
+  whoever hits it.
+
+  **The fix this note used to propose does not work.** `KeyStoreError::Missing`
+  is a unit variant whose message is "no node secret available and this key
+  store cannot create one" — about a missing *secret*, not a missing
+  environment, and carrying no detail. Swapping it in would trade a misleading
+  message for a differently misleading one. The real options are to add a
+  variant (`Unconfigured { reason }`, additive but a port change) or to leave
+  it. I is the second slice to look at this and decline: it added
+  `AllowlistError::Unconfigured` for the sibling path rather than widen the port
+  mid-slice, so the two now disagree with each other, which is its own small
+  argument for doing it properly next time.
 - `ScopedTempFile` has no disarm: `Drop` always removes the temp. Correct today.
   If a future change needs the temp to survive (retrying a link, say), add a
   disarm rather than restructuring the guard.

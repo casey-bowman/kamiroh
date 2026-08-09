@@ -4,26 +4,32 @@
 //! implementation, hands the wiring to the application layer, and does nothing
 //! else — no policy, no protocol, no agent logic.
 //!
-//! As of slice G this is a real node: it holds a persistent identity, listens
-//! for allowlisted peers over Iroh, and drives agents — local or remote — that
-//! are real Kameo actors. What those agents *do* is still the echo stand-in,
-//! and the allowlist is read from the environment rather than from a config
-//! adapter (slice I).
+//! As of slice I every driven port has a real adapter: a persistent identity on
+//! disk, an allowlist read from a file, an Iroh transport and front, and agents
+//! that are real Kameo actors. What those agents *do* is still the echo
+//! stand-in.
 //!
 //! # Configuration
 //!
 //! | Variable | Meaning |
 //! |---|---|
 //! | `KAMIROH_KEY_FILE` | Where the node secret lives. Default `$XDG_CONFIG_HOME/kamiroh/node.key`. |
-//! | `KAMIROH_ALLOW` | Comma-separated peer endpoint ids (hex) permitted to reach this node. **Unset means deny everyone.** |
+//! | `KAMIROH_ALLOW_FILE` | The allowlist file. Default `$XDG_CONFIG_HOME/kamiroh/allow`. |
+//! | `KAMIROH_ALLOW` | Comma-separated endpoint ids. **Overrides the file entirely**, for tests and for running several nodes on one machine. |
 //! | `KAMIROH_PEER` | `<endpoint-id-hex>@<host:port>` — a peer to greet on startup. |
+//!
+//! Nothing is admitted by default, whichever source is used: an unset variable,
+//! an absent file and an empty file all mean "admit nobody". A file that exists
+//! but cannot be parsed is fatal rather than empty — see
+//! [`kamiroh_adapter_fs::allowlist`].
 
 use std::error::Error;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 
-use kamiroh_adapter_fs::FileKeyStore;
+use kamiroh_adapter_fs::{FileAllowlist, FileKeyStore};
 use kamiroh_adapter_iroh::{
     EndpointAddr, IrohTransport, bind_endpoint, endpoint_id_for, front, peer_address,
 };
@@ -37,13 +43,33 @@ use kamiroh_ports::{
 
 /// Where the node secret lives.
 const KEY_FILE_ENV: &str = "KAMIROH_KEY_FILE";
-/// Peers permitted to reach this node.
+/// Peers permitted to reach this node, overriding the allowlist file.
 const ALLOW_ENV: &str = "KAMIROH_ALLOW";
+/// Where the allowlist lives.
+const ALLOW_FILE_ENV: &str = "KAMIROH_ALLOW_FILE";
 /// A peer to greet on startup, as `<endpoint-id-hex>@<host:port>`.
 const PEER_ENV: &str = "KAMIROH_PEER";
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> ExitCode {
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            // A `Result`-returning `main` prints the error's `Debug`, which for
+            // these is a struct dump rather than the sentence the error was
+            // written to be. Refusing to start is only as useful as the reason
+            // it gives, and a malformed allowlist is the case that has to read
+            // well: the operator is looking for which line they broke.
+            //
+            // Only the top level is printed. Every error type here embeds its
+            // source in its own message, so walking the chain would repeat it.
+            eprintln!("kamiroh: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<(), Box<dyn Error>> {
     // --- Driven ports -------------------------------------------------------
     let key_path = match std::env::var_os(KEY_FILE_ENV) {
         Some(path) => PathBuf::from(path),
@@ -53,9 +79,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let secret = key_store.load_or_create().await?;
     let local_endpoint = endpoint_id_for(&secret);
 
-    let allowed = parse_allowlist()?;
-    let allowlist: Arc<dyn Allowlist> =
-        Arc::new(InMemoryAllowlist::with_endpoints(allowed.clone()));
+    let (allowlist, allow_summary) = build_allowlist()?;
 
     let agent = ActorName::new("agent")?;
     let controller: Arc<dyn AgentController> =
@@ -83,15 +107,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("endpoint id: {local_endpoint}");
     println!("listening:   {listening:?}");
     println!("agent:       {agent}");
-    println!(
-        "allowing:    {} peer(s){}",
-        allowed.len(),
-        if allowed.is_empty() {
-            format!(" — set {ALLOW_ENV} to admit peers; nothing is admitted by default")
-        } else {
-            String::new()
-        }
-    );
+    println!("allowing:    {allow_summary}");
 
     local_smoke(control.as_ref(), &agent).await?;
 
@@ -105,12 +121,45 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Reads the allowlist. Absent or empty means admit nobody.
-fn parse_allowlist() -> Result<Vec<EndpointId>, Box<dyn Error>> {
-    let Some(raw) = std::env::var_os(ALLOW_ENV) else {
-        return Ok(Vec::new());
+/// Resolves the allowlist, returning it and a line describing where it came
+/// from.
+///
+/// `KAMIROH_ALLOW` wins outright when set — explicit beats ambient, and a node
+/// launched with one should not also be reading a file it never mentioned. The
+/// summary is returned rather than printed so this stays a resolver, and so the
+/// startup output always names the source: an allowlist that silently came from
+/// somewhere other than where the operator was editing is the failure mode most
+/// worth making impossible to miss.
+fn build_allowlist() -> Result<(Arc<dyn Allowlist>, String), Box<dyn Error>> {
+    if let Some(raw) = std::env::var_os(ALLOW_ENV) {
+        let endpoints = parse_allow_env(&raw.to_string_lossy())?;
+        let summary = match endpoints.len() {
+            0 => format!("0 peer(s) — {ALLOW_ENV} is set but empty; nothing is admitted"),
+            count => format!("{count} peer(s) from {ALLOW_ENV}"),
+        };
+        return Ok((
+            Arc::new(InMemoryAllowlist::with_endpoints(endpoints)),
+            summary,
+        ));
+    }
+
+    let path = match std::env::var_os(ALLOW_FILE_ENV) {
+        Some(path) => PathBuf::from(path),
+        None => FileAllowlist::default_path()?,
     };
-    let raw = raw.to_string_lossy().into_owned();
+    let allowlist = FileAllowlist::load(&path)?;
+    let summary = match allowlist.len() {
+        0 => format!(
+            "0 peer(s) — add endpoint ids to {}, one per line; nothing is admitted",
+            path.display()
+        ),
+        count => format!("{count} peer(s) from {}", path.display()),
+    };
+    Ok((Arc::new(allowlist), summary))
+}
+
+/// Parses the comma-separated override.
+fn parse_allow_env(raw: &str) -> Result<Vec<EndpointId>, Box<dyn Error>> {
     raw.split(',')
         .map(str::trim)
         .filter(|entry| !entry.is_empty())

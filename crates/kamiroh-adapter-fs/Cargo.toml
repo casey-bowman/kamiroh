@@ -11,6 +11,9 @@ authors.workspace = true
 kamiroh-domain.workspace = true
 kamiroh-ports.workspace = true
 async-trait.workspace = true
+# The `Allowlist` port is infallible by design, so the load-time failures of a
+# file-backed one need an error type of their own.
+thiserror.workspace = true
 # OS entropy only — no PRNG layer, since a node secret is generated once.
 # "std" is what implements `Error` for its error type, so a failure can be
 # reported through `KeyStoreError::Backend` as a source rather than a string.
