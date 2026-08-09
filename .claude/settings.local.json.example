@@ -1,0 +1,16 @@
+{
+  "sandbox": {
+    "filesystem": {
+      "allowWrite": [
+        "/Users/YOUR_USER/path/to/kamiroh",
+        "/Users/YOUR_USER/path/to/kamiroh/.git"
+      ]
+    }
+  },
+  "permissions": {
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
