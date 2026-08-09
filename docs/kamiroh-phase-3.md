@@ -149,25 +149,28 @@ too late:**
    sanitises HTML:
 
    ```markdown
-   ![kamiroh](https://raw.githubusercontent.com/<owner>/kamiroh/<ref>/kamiroh.jpg)
+   ![kamiroh](https://raw.githubusercontent.com/casey-bowman/kamiroh/<tag>/kamiroh.jpg)
    ```
 
    **Pin `<ref>` to a tag, not `master`.** A published version's README is
    immutable, but an image URL pointing at a branch is not — the logo of
    version 0.1.0 would change the next time `master` did.
 
-2. **`<owner>` is genuinely unclear, and must be settled first.** The manifest
-   and the remote disagree:
+2. **The owner is `casey-bowman`, and the apparent discrepancy is not a bug.**
+   `Cargo.toml`'s `repository` and `git remote origin` name different repos:
 
-   | | |
-   |---|---|
-   | `Cargo.toml` `repository` | `https://github.com/casey-bowman/kamiroh` |
-   | `git remote origin` | `git@github.com:kamiroh-workshop/kamiroh.git` |
+   | | | |
+   |---|---|---|
+   | `Cargo.toml` `repository` | `casey-bowman/kamiroh` | the canonical home — **use this** |
+   | `git remote origin` | `kamiroh-workshop/kamiroh` | the fork work is pushed from, for PRs |
 
-   One of those is wrong. Whichever is the public home decides both the raw
-   image URL and what the crates.io "Repository" link points at — and a
-   published crate with a repository link to the wrong place is not fixable
-   without a new version.
+   Both are correct; they mean different things. Written down because it reads
+   as a mistake, and the wrong guess would put a crates.io repository link on a
+   fork — not fixable without publishing a new version.
+
+   **Sequencing:** a raw URL only resolves once the image exists *upstream* at
+   the pinned tag. Publishing from a fork whose logo commit has not been merged
+   would ship a README with a broken image.
 
 3. **The README's lifecycle claim.** It promises starting and managing agents;
    kamiroh attaches and cannot stop one (§2.2). Fix in P1, or reword before
