@@ -73,6 +73,7 @@ records what held and the one judgment still outstanding.
 | `docs/ARCHITECTURE.md` | the design as built; §6a–§6f are the enforced rules |
 | `docs/OPEN-DECISIONS.md` | waiting on a person |
 | `docs/kamiroh-phase-3.md` | current plan |
+| `docs/kamiroh-phase-4.md` | the next one, sketched — kamiroh as a substrate for agents rather than a remote control for people |
 | `docs/reachability-test.md` | the two-machine NAT procedure |
 | `demos/` | scripts that verify claims against real processes |
 | `docs/prompt.txt` | the original master prompt, for history |

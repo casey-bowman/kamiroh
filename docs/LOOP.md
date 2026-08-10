@@ -49,7 +49,19 @@ to Casey with the trade laid out and answered *long-poll*.
 3. **P4 — publishing**, whose blocking item (the README's lifecycle claim) is
    now fixed. What remains on that checklist is the crates.io logo URL and the
    repository-owner question, both written up in kamiroh-phase-3.md §P4.
-4. **Nothing else is queued.** Phase 3's milestones are otherwise complete.
+4. **Nothing else is queued** in phase 3; its milestones are otherwise complete.
+
+**And phase 4 is sketched, because the purpose got stated more precisely than
+the plans assumed.** Casey's actual need is agents running peer-to-peer apps on
+distributed nodes, delegating work to each other, with Kameo's actor model as the
+interaction metaphor — which is a different system from the human-at-a-pane one
+phase 3 was built for, using the same parts.
+[kamiroh-phase-4.md](./kamiroh-phase-4.md) scores kamiroh against the actor model
+and finds two properties missing: **a caller cannot collect an agent's output**
+(delegation's blocker — `AwaitSettled` says *that* it finished, never *what* it
+produced), and **agents cannot originate messages**, so "peer actors that message
+each other" is not yet true. It is a sketch rather than a plan: phase 3 comes
+first.
 
 **One thing raised and not taken up:** whether kamiroh should say how *confident*
 a status is, given M3 measured `codex` reporting a permission prompt as `idle`
