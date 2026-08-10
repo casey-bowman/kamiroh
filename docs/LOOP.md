@@ -205,20 +205,51 @@ real-daemon behaviour rather than on the schema — the refusal code
 against herdr 0.8.0 directly, where a 200-line ask returned the 57 lines on
 screen.
 
-**The live re-run through `demos/use_it.sh` verified one direction and could not
-reach the other.** No `controller backend failed`: the prompt returned an answer,
-`recent` was used for a settled agent, and the path that failed on every prompt
-before now works. **The `visible` path is still unverified live**, because the
-agent in this run never reached `working` at all — so say so rather than let a
-green-looking run stand in for it.
+**Verified live, both directions, over two runs.** The first reached only the
+`recent` half, because its agent never worked at all; a second run in a directory
+where an agent had worked before reached the half that matters.
 
-**Why it never worked, and it is not kamiroh's.** The freshly started agent came
-up with `manual mode on` and sat `idle` for the whole run, doing nothing with the
-prompt. A direct `agent.prompt` to the same pane, bypassing kamiroh entirely,
-behaved the same way — an empty response, and `agent.get` reporting `kind: null`
-for a pane `agent.start` had accepted as `claude`. Diagnosing that belongs to
-Herdr or Claude Code. What it costs kamiroh is a verification, and the earlier P2
-run shows the working path is reachable in a directory that has been used before.
+```
+herdr:   5s idle   10s–55s working   60s blocked
+kamiroh: prompt -> [still working]   /status -> busy · busy · busy   /detach -> ok
+```
+
+**That `[still working]` is the whole slice.** It is `Partial{Busy}` carrying the
+screen, delivered while the agent was genuinely mid-task — the exact call that
+answered `controller backend failed` on every prompt before the fix. The three
+`busy` replies line up with Herdr's `working` throughout, so kamiroh was not
+merely returning *something*, it was returning the truth.
+
+**What the screen actually carried is worth recording, since §6e made a
+prediction about it:**
+
+```
+⏺ I'll look at the crate first.
+  Reading 1 file, listing 1 directory…
+  ⎿  Cargo.toml
+· Julienning… (19s · ↓ 309 tokens · thinking)
+```
+
+Thin on *answer* and rich on *progress* — elapsed time, tokens, what it had read.
+The §6e caveat holds ("may carry a spinner rather than anything the agent has
+said"), and the useful part is the shape: mid-task, a terminal tells you an agent
+is **getting somewhere**, not what it concluded. One more argument that the thing
+worth pushing to a remote operator is state rather than scraped text.
+
+**A correction to what this file said an hour ago.** The first run's failure was
+attributed here to the agent coming up with `manual mode on`. That is wrong: the
+successful run showed `manual mode on` too, and worked. Manual mode is normal, so
+the cause of the first run's no-op is unknown and was never kamiroh's — a direct
+`agent.prompt` bypassing kamiroh behaved identically, with an empty response and
+`agent.get` reporting `kind: null` for a pane `agent.start` had accepted as
+`claude`. Recorded as unexplained rather than left with a plausible cause
+attached, which is how a wrong explanation becomes settled fact.
+
+**The re-run needed a change to the script, and why is itself the finding.**
+`demos/use_it.sh` took a fixed work directory, and everything that decides
+whether a run can work is keyed to that *path* — Claude Code's workspace trust,
+and whatever else it remembers per project. `KAMIROH_DEMO_DIR` now overrides it,
+which is the difference between reproducing a failure and guessing at it.
 
 **And the run found something worse than the bug it was checking.** Because the
 prompt settled `idle` immediately, kamiroh answered with `Output` — a *finished*

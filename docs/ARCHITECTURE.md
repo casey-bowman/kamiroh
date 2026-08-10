@@ -688,6 +688,11 @@ own, and kamiroh's job is not to make it worse.
   anything the agent has "said". That is the honest trade: the alternative,
   which is what happened before, was the whole prompt failing.
 
+  Measured against a real agent, what comes back is thin on *answer* and rich on
+  *progress* — "Reading 1 file… Julienning… (19s · ↓ 309 tokens · thinking)".
+  Mid-task, a terminal tells you an agent is getting somewhere, not what it
+  concluded. Worth knowing before treating `Partial`'s output as a short answer.
+
 **Two limits, stated rather than hidden.** `agent.read` returns the last N lines
 of a pane, and a terminal has no marker for "this is the answer to that prompt"
 — so what counts as output is a heuristic and may include the prompt's own echo.

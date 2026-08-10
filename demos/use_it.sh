@@ -13,7 +13,12 @@ set -u
 cd "$(dirname "$0")/.."
 
 SOCK="${HERDR_SOCKET_PATH:-$HOME/.config/herdr/herdr.sock}"
-DEMO="${TMPDIR:-/tmp}/kamiroh-use-it"
+# Overridable because everything that decides whether a run works is keyed to
+# the *path*: Claude Code's workspace trust, and whatever else it remembers per
+# project. When a run comes up unable to work -- one did, in manual mode, never
+# touching the prompt -- re-running in a directory where an agent has worked
+# before is the difference between reproducing and guessing.
+DEMO="${KAMIROH_DEMO_DIR:-${TMPDIR:-/tmp}/kamiroh-use-it}"
 WORK="$DEMO/work"
 BIN=./target/debug/kamiroh
 

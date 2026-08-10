@@ -108,6 +108,13 @@ The first run in any new directory raises a workspace-trust dialog that a human
 must answer — deliberately. Approving a consent prompt from a script is one step
 from approving it in the product; see `docs/LOOP.md`.
 
+**A run's behaviour is keyed to the work directory's path**, not just its
+contents: workspace trust is recorded per path, and one run's agent came up and
+never touched the prompt at all while the same script in another directory
+worked. `use_it.sh` takes `KAMIROH_DEMO_DIR` for that reason — re-running
+somewhere an agent has worked before is the difference between reproducing a
+result and guessing at it.
+
 ## The ones that publish
 
 `m2_live.sh` and `disclosure.sh` set `KAMIROH_REACH=anywhere`, which publishes
