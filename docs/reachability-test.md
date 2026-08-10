@@ -156,11 +156,58 @@ away machine to a hotspot and run it again.
 
 ---
 
+## 5a. While you are there: time a cold dial against warm ones
+
+**Do this in the same session, because this is the only setup where the numbers
+mean anything.** Two machines, real NAT, a real relay. Timings taken on one host
+measure nothing but local crypto.
+
+The question it answers belongs to P1: kamiroh's transport dials, sends, and
+hangs up, so a long-poll re-dials every 20 seconds. Whether that is free depends
+on what Iroh keeps between connections — the peer's addresses and the
+hole-punched path — and its docs say only that it keeps them "for a little
+while".
+
+Two measurements, both cheap:
+
+**Cold versus warm.** Time the first dial after starting the away node, then
+twenty back-to-back dials. Any repeated `KAMIROH_PEER` prompt does it — the
+`peer <id> -> …` line is one full dial each. What matters is the *ratio*: if a
+warm dial is a fraction of a cold one, re-dialling on a loop costs about one
+round trip and the long-poll design is free. If they are the same, the endpoint
+is not retaining anything and that changes the answer.
+
+**How long the warm case lasts.** Idle, then dial, and see which you get. Sweep
+rather than guess: 30s, 60s, 2min, 5min, 10min, timing a dial after each. You are
+looking for the point where the time jumps back to cold.
+
+**Do not try to isolate Iroh's own retention from NAT binding expiry.** A UDP
+mapping in a home router typically dies after 30 seconds to a couple of minutes,
+and from outside you cannot tell that apart from Iroh dropping its path
+information. That conflation is fine — better, in fact. The operationally useful
+number is *"after how long idle does a redial get slow"*, and that is what a
+poll interval has to sit under, whichever layer causes it.
+
+If you do want Iroh's own answer specifically, `Endpoint::remote_info(id)`
+returns `None` once it has dropped a peer, which is a direct observation rather
+than an inference from latency. It needs a few lines of code kamiroh does not
+have today, so treat it as optional.
+
+**Record whatever you get**, even if it is rough. A range beats the current
+state, which is a shrug — and it decides whether re-dialling on a timer is a
+real cost or a rounding error.
+
+---
+
 ## 6. Afterwards
 
 Record the outcome in [OPEN-DECISIONS.md](./OPEN-DECISIONS.md) — including which
 path type you got — and strike item 2. A decision leaves that list by being
 decided, not by going quiet.
+
+Record §5a's timings in LOOP.md next to the P1 entry, whatever they are. They
+are the only evidence that will exist about what a re-dial costs on a real
+network, and the design question they inform is open right now.
 
 If it fails, that is a finding rather than a setback: the README's headline case
 would then be aspirational, and phase 3 should say so before anyone else is

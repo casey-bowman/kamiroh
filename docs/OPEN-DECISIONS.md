@@ -63,6 +63,12 @@ fifteen-minute procedure with the exact commands, what counts as proof, and the
 one way to get a false pass (running both machines on the same network, where
 they find each other over the LAN and it looks like success).
 
+**Take the dial timings while you are there — §5a.** Two machines on real
+networks is also the only setup where "what does re-dialling cost" can be
+measured, and P1's long-poll design turns on the answer. It is a few minutes on
+top of a test that has to happen anyway, and the numbers cannot be obtained any
+other way.
+
 **Cost of leaving it open:** the README's headline case, "home ↔ cafe, behind
 NAT", is the one claim in it that has never been demonstrated. Worth settling
 before anyone else is invited to rely on it.
