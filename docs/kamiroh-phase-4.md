@@ -35,8 +35,7 @@ identifiable, and it is not evenly distributed.
 
 ---
 
-## 2. The finding: an actor system missing the two properties that make actors
-compose
+## 2. The finding: an actor system missing what makes actors compose
 
 | property | state |
 |---|---|
@@ -93,6 +92,69 @@ peer it did not already have.
 Not a defect. ACLs are legitimate, far simpler to reason about, and auditable in a
 way capabilities are not. But it is currently *implicit*, and it constrains
 everything else here, so it should be decided rather than drifted into.
+
+### 2.3 Herdr is optional at both ends — one of which is already true
+
+Casey's framing, and it separates three things that get bundled under "Herdr":
+
+| | Herdr-coupled? |
+|---|---|
+| the **console** (`console::serve`) | **no** — it takes any `AsyncBufRead`/`AsyncWrite`, mentions Herdr only in a doc comment, and is tested with a `String` and a `Vec<u8>` |
+| the **pane** (`Pane`, `report`) | yes — that is Herdr's socket |
+| the **agent** (`HerdrAgent`) | yes — **and it is the only real `Agent` there is** |
+
+**The caller end already works without Herdr, and nothing says so.**
+`bind_endpoint`, `IrohTransport`, `peer_address` and `codec` are all public, so a
+program can bind an endpoint and drive a remote agent with no console, no pane and
+no Herdr on that machine:
+
+```rust
+transport.send(&peer_address(id, "builder")?, ControlMessage::Prompt(payload)).await
+```
+
+That is a **packaging and documentation gap, not a design one**: there is no
+`kamiroh::Client` facade, so a caller wires what the composition root wires, and
+nothing documents it because the console is the only client anyone has
+demonstrated. It also gives P3a a second audience — someone writing a program
+against kamiroh, not only someone typing at it.
+
+**The agent end is where Herdr is currently mandatory**, and that is what makes
+the closing question of §5 a requirement rather than a question.
+
+#### The use case that settles it: a test suite driving agents on many nodes
+
+A Cucumber suite that has several agents on different nodes do things, and asserts
+on the results. One end is an application using kamiroh; the other end is agents
+that need not be panes.
+
+What a non-pane agent buys immediately:
+
+- **Structured output instead of a screen scrape.** `AgentOutcome` already carries
+  an arbitrary `Payload`; a subprocess agent returns what the process produced.
+- **Non-text payloads.** The text-only restriction exists solely because a pane
+  takes keystrokes.
+
+What it does **not** fix, stated precisely because it is easy to assume otherwise:
+**S1 remains necessary.** Any agent doing minutes of work must still return inside
+the caller's patience, so `run` ends in `Partial{Busy}` and the real result arrives
+later with nobody waiting. The substrate change makes that result a *well-defined
+value the agent could hold and hand over* rather than a terminal snapshot one hopes
+contains the answer. S1 goes from heuristic to clean — a large improvement in its
+design, none in its necessity.
+
+**Two frictions this use case surfaces that the milestones did not:**
+
+- **An ephemeral caller fits an ACL badly.** A suite that generates a fresh key
+  each run has a new endpoint id each run, and every agent node's allowlist would
+  need updating before it could connect. The practical answer is easy — a fixed
+  test identity via `KAMIROH_KEY_FILE`, allowlisted once per node — but it is a
+  concrete instance of S4. The moment callers are *created* rather than
+  *administered*, an ACL is the wrong shape, and that is the pressure that would
+  push toward capabilities.
+- **One prompt at a time is a controller property, not a pane property.** Parallel
+  scenarios against the *same* agent are answered `Rejected`, not queued. Different
+  agents are unaffected. Whether that bites depends on how work is sharded, and it
+  is worth knowing before it is discovered in a test run.
 
 ---
 
@@ -231,12 +293,20 @@ claim:
 3. **S4** — decided, not built, before S2 is designed.
 4. **S2** — the largest, and the one that makes the README's central claim true.
 
-**And one question that sits underneath S1 and may reorder everything:** whether a
-Herdr pane is the right substrate for agent-to-agent work at all. Every limitation
-that makes S1 awkward — output as a terminal snapshot, text-only payloads, one
-prompt at a time — comes from the agent being a terminal. A second `Agent`
-implementation that is not a pane would remove all three at once, and the port was
-designed to allow exactly that.
+**The question that sat underneath S1 is now answered, by the use case.** A Herdr
+pane is the right substrate for *human*-to-agent work and the wrong one for
+agent-to-agent work: every limitation that makes S1 awkward — output as a terminal
+snapshot, text-only payloads — comes from the agent being a terminal. §2.3's test
+suite needs agents that are not panes, so a second `Agent` implementation is a
+requirement rather than an option. The port was designed to allow exactly that and
+nothing has needed it yet.
 
-That is worth answering before S1 rather than after, because it decides whether S1
-is a verb or a new adapter.
+So the order above gains a step, and it is cheap: **a non-pane `Agent` before
+S1**, because it decides what S1's verb is returning. Note it does not replace
+S1 — see §2.3.
+
+**And a smaller one worth doing early because it is nearly free:** a `Client`
+facade for the caller end. Everything needed is already public; what is missing is
+one type that binds an endpoint and sends, so an application does not have to
+reproduce the composition root. That is the difference between "a program *can*
+drive kamiroh" and "a program *does*".

@@ -60,8 +60,15 @@ phase 3 was built for, using the same parts.
 and finds two properties missing: **a caller cannot collect an agent's output**
 (delegation's blocker — `AwaitSettled` says *that* it finished, never *what* it
 produced), and **agents cannot originate messages**, so "peer actors that message
-each other" is not yet true. It is a sketch rather than a plan: phase 3 comes
-first.
+each other" is not yet true. It also records something that had never been said: **the caller end already
+works without Herdr** — `bind_endpoint`, `IrohTransport` and `codec` are public,
+so a program can drive a remote agent with no console and no pane. That is a
+packaging and documentation gap rather than a design one, and it gives P3a a
+second audience. The *agent* end is where Herdr is still mandatory, which is what
+makes a non-pane `Agent` a requirement rather than an option — Casey's worked
+example is a test suite driving agents on several nodes.
+
+It is a sketch rather than a plan: phase 3 comes first.
 
 **One thing raised and not taken up:** whether kamiroh should say how *confident*
 a status is, given M3 measured `codex` reporting a permission prompt as `idle`
