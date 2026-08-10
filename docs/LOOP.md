@@ -40,10 +40,16 @@ to Casey with the trade laid out and answered *long-poll*.
    numbers P1 wants can be measured. Procedure and both measurements:
    [reachability-test.md](./reachability-test.md), §5a for the timings. Needs a
    second machine on a different network; a phone hotspot is the whole trick.
-2. **P4 — publishing**, whose blocking item (the README's lifecycle claim) is
+2. **P3a — say plainly what kamiroh does.** Casey asked for this on
+   2026-08-10, for after the coding: a document explaining exactly what kamiroh
+   does, directly and simply. It is a genuine gap — every doc here is written for
+   someone *building* kamiroh or resuming work on it, and none for someone
+   deciding whether to use it. Scoped in kamiroh-phase-3.md §P3a, and it comes
+   **before** P4: publishing without it ships the gap to strangers.
+3. **P4 — publishing**, whose blocking item (the README's lifecycle claim) is
    now fixed. What remains on that checklist is the crates.io logo URL and the
    repository-owner question, both written up in kamiroh-phase-3.md §P4.
-3. **Nothing else is queued.** Phase 3's milestones are otherwise complete.
+4. **Nothing else is queued.** Phase 3's milestones are otherwise complete.
 
 **One thing raised and not taken up:** whether kamiroh should say how *confident*
 a status is, given M3 measured `codex` reporting a permission prompt as `idle`

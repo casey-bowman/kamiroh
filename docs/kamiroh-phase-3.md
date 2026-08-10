@@ -220,6 +220,46 @@ third is a candidate on that list, not yet proposed.*
   it could stop *implying* more confidence than it has — a status that says
   where it came from would be honest.
 
+### P3a — Say plainly what kamiroh does
+
+**Requested by Casey, 2026-08-10, for after the coding.** A document that
+explains exactly what kamiroh does, directly and simply.
+
+**Why it is a real gap rather than a fifth restatement.** Every document here is
+written for someone *building* kamiroh or resuming work on it:
+
+| | written for | answers |
+|---|---|---|
+| `ARCHITECTURE.md` | a builder | how it is put together, and why |
+| `LOOP.md` | the next session | what is done, what is next |
+| `kamiroh-phase-*.md` | the planner | what to do and in what order |
+| `README.md` | a passer-by | what it aims to be, and what it is not |
+
+Nobody has written the one for a person deciding whether to use it, or sitting
+down to. The README is closest and is still the wrong shape — aims, non-goals and
+status, which describes a project rather than a tool. "What does it do" is
+answered today only by reading nine crates or a thousand lines of loop notes.
+
+**What it should contain**, so this is actionable rather than a wish:
+
+- The thing itself in a paragraph: an agent runs on a machine you are not sitting
+  at, and this lets you drive it from one you are.
+- The five verbs in plain words, with what each is *for* — not the enum.
+- The shape of a session: what you type, what comes back, what `blocked` means
+  and why it is the state that matters.
+- Setting one up: two nodes, the key file, the allowlist, `KAMIROH_PEER`. The
+  variables are documented in `main.rs` and nowhere a user would look.
+- What it deliberately will not do, briefly, and where that is argued.
+- What is unproven — NAT traversal — stated where someone will see it before
+  relying on it rather than in a decisions file.
+
+**Sequencing: before P4, not after.** Publishing without it ships the same gap to
+strangers, and the pre-publish checklist below is about accuracy rather than
+usefulness. It also wants the code finished first, as Casey said: a document
+written against a moving vocabulary is how `Shutdown` outlived its own meaning.
+
+---
+
 ### P4 — Let someone else run it
 
 Only worth doing after P2. The README currently promises lifecycle management
