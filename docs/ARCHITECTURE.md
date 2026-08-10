@@ -652,6 +652,11 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
   production stand-in for a node with no agent runtime, not only a test double.
   The spawned task sleeps out the remainder before answering. The port cannot do
   this: it has no clock, and the actor must not sleep in a handler.
+- **Nor does a failed run.** A run that fails says nothing about the *agent* —
+  the case that makes it concrete is a read refused mid-task, where the agent is
+  working perfectly well and only kamiroh's question failed. It used to set
+  `Idle`, directly beneath a comment explaining that claiming `Idle` would invite
+  another prompt into the same failure. The cached `Busy` stands instead.
 - **`StopWaiting` does not touch the cached status.** It establishes that kamiroh
   is no longer waiting and nothing about the agent, which for a real runtime
   carries on working — only the *wait* was abandoned. It used to set `Idle`,

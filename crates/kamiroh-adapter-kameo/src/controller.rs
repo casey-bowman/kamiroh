@@ -381,6 +381,54 @@ mod tests {
     /// rather than left to two constants happening to agree: the Iroh front
     /// gives a request 30s and the transport gives a reply 30s, so a wait that
     /// outlasted either would be answered by a timeout instead of by this node.
+    /// A failed run says nothing about the agent, so the controller must not
+    /// answer `Idle` afterwards.
+    ///
+    /// The case that makes it concrete: a read refused while the agent works.
+    /// The agent is fine and busy; only kamiroh's question failed. Reporting
+    /// `Idle` there tells a remote operator the agent is free mid-task, which
+    /// is the direction §6e calls dangerous. The old code did exactly that,
+    /// under a comment explaining why it should not.
+    #[tokio::test]
+    async fn a_failed_run_does_not_leave_the_agent_looking_idle() {
+        struct Fails;
+
+        #[async_trait]
+        impl Agent for Fails {
+            async fn run(&self, _prompt: Payload) -> Result<AgentOutcome, AgentError> {
+                Err(AgentError::Unavailable {
+                    detail: "the runtime went away".to_owned(),
+                })
+            }
+        }
+
+        let controller = KameoController::new().with_agent(agent(), Fails);
+
+        let error = controller
+            .dispatch(&agent(), ControlMessage::Prompt(Payload::text("go")))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ControllerError::Backend(_)), "{error:?}");
+
+        // `Fails` has no opinion of its own, so this is purely what the
+        // controller cached — and it must not have invented `Idle`.
+        assert_eq!(
+            controller
+                .dispatch(&agent(), ControlMessage::Status)
+                .await
+                .unwrap(),
+            ControlReply::Status(AgentStatus::Busy),
+            "a failed run must not report the agent as free"
+        );
+
+        // And the failure must not have jammed anything: a further prompt is
+        // still accepted, because `start` gates on the run and not the status.
+        let again = controller
+            .dispatch(&agent(), ControlMessage::Prompt(Payload::text("again")))
+            .await;
+        assert!(again.is_err(), "the agent still fails, but it was accepted");
+    }
+
     #[test]
     fn patience_leaves_room_under_the_front_timeout() {
         assert!(

@@ -401,10 +401,17 @@ impl Message<Finished> for AgentActor {
             }
             Err(error) => {
                 tracing::warn!(agent = %self.name, %error, "agent run failed");
-                // The runtime failed, so the agent's state is not something we
-                // know — and claiming `Idle` would invite another prompt into
-                // the same failure.
-                self.status = AgentStatus::Idle;
+                // **The status is deliberately not touched**, and the comment
+                // that used to sit here said why while the code did the
+                // opposite: the runtime failed, so the agent's state is not
+                // something we know, and claiming `Idle` invites another prompt
+                // into the same failure.
+                //
+                // A failed run says nothing about the *agent*. The one that
+                // matters is a read refused mid-task — the agent is working
+                // perfectly well and only kamiroh's question failed. The cached
+                // `Busy` stands, and `Status` corrects it from the agent
+                // whenever the agent has an opinion.
                 Err(ControllerError::Backend(Box::new(error)))
             }
         };

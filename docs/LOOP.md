@@ -139,13 +139,42 @@ same requests work. That retroactively invalidates the evidence used to conclude
 the first P1 live run's failure "was not kamiroh's": that probe proved nothing.
 Corrected below.
 
-**Raised, not fixed:** the `Finished` handler sets `status = Idle` when a run
-*fails*, directly under a comment saying that claiming `Idle` would invite
-another prompt into the same failure. The comment and the code disagree, and it
-is the same class this pass has removed four times. Out of scope here; worth a
-look.
+**And the fifth instance of the same defect, fixed on a follow-up.** The
+`Finished` handler set `status = Idle` when a run *fails*, directly beneath a
+comment saying that claiming `Idle` would invite another prompt into the same
+failure — the comment and the code disagreeing in the same file. The case that
+makes it concrete is the read refusal this pass began with: the agent is working
+perfectly well and only kamiroh's question failed, so reporting it free is wrong
+exactly when a remote operator would act on it. The cached `Busy` stands now.
 
-**Verified:** 203 tests, fmt and clippy clean. The await tests run under paused
+Mutation-tested, and the first attempt at that mutation was itself wrong:
+`Backend(Box::new(error))` appears twice in the file and the edit hit the
+`Settled` handler instead, producing a green run that proved nothing. Anchored on
+the surrounding comment, the mutation fails exactly one test. Worth recording —
+a mutation that silently applies somewhere else is indistinguishable from a
+property that is guarded.
+
+**Verified live, and the half a fake could not show.** Against a real `claude`
+agent: the prompt returned `[still working]`, `/await` answered `blocked`, and
+Herdr's own timeline agreed (`idle → working at 10s → blocked at 15s`). The agent
+had hit a permission dialog and the verb reported it, end to end through domain,
+codec, actor and Herdr client.
+
+That run only exercised the *already-settled* path, though — by the time kamiroh
+read `/await`, the agent was blocked already. The claim the whole design rests on
+is that a wait fires **on the transition**, and that was measured separately and
+for free, by pointing `agent.wait` at this session's own pane and letting the
+turn end:
+
+```
+start, pane state: working
+agent.wait until=[idle], timeout 120s  ->  {"status":"idle"}
+```
+
+A status rather than `code: timeout`, so the wait was released by the change
+rather than by expiry. That is the latency claim, demonstrated.
+
+**Verified:** 204 tests, fmt and clippy clean. The await tests run under paused
 time — the first version genuinely slept twenty real seconds while its own
 comment claimed otherwise, so the actor now measures against `tokio::time` rather
 than `std::time`, the clock it actually sleeps on.
