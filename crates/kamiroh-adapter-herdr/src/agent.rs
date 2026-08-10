@@ -157,6 +157,16 @@ impl HerdrAgent {
     }
 }
 
+/// The states a caller can act on: finished, waiting for a human, or done.
+///
+/// Shared by `run`'s prompt wait and `await_settled`, so the two cannot drift
+/// into disagreeing about what "settled" means.
+const SETTLED_STATES: &[PaneAgentState] = &[
+    PaneAgentState::Idle,
+    PaneAgentState::Blocked,
+    PaneAgentState::Done,
+];
+
 /// Herdr's code for "I cannot capture scrollback while this agent is working".
 ///
 /// The code, never the message: see [`ClientError::refusal_code`].
@@ -187,11 +197,7 @@ impl Agent for HerdrAgent {
                 // noticed and every prompt expired instead — the first thing a
                 // live run caught. `blocked` is the one that matters remotely:
                 // without it a waiting agent looks merely slow.
-                &[
-                    PaneAgentState::Idle,
-                    PaneAgentState::Blocked,
-                    PaneAgentState::Done,
-                ],
+                SETTLED_STATES,
             )
             .await
             .map_err(unavailable)?;
@@ -212,6 +218,32 @@ impl Agent for HerdrAgent {
             // and the one that does not claim completion.
             PaneAgentState::Unknown => AgentOutcome::still_working(output),
         })
+    }
+
+    async fn await_settled(
+        &self,
+        patience: Duration,
+    ) -> Result<Option<kamiroh_domain::AgentStatus>, AgentError> {
+        // The same resting states a prompt waits on, and for the same reason: a
+        // real agent returns to `idle` when it has answered, not to `done`.
+        // `Starting` is deliberately absent — an agent that is not ready yet is
+        // not something to hand back to a caller as settled.
+        let settled = self
+            .client
+            .wait_for_agent(&self.target, SETTLED_STATES, patience)
+            .await;
+
+        match settled {
+            Ok(state) => Ok(agent_status(state)),
+            // Herdr reports an expired wait as an error with code `timeout`.
+            // That is a statement about the wait, not about the agent — the
+            // same distinction M1 had to make for `agent.prompt`. Still
+            // working, and the caller should ask again.
+            Err(ClientError::Refused { ref code, .. }) if code == "timeout" => {
+                Ok(Some(kamiroh_domain::AgentStatus::Busy))
+            }
+            Err(error) => Err(unavailable(error)),
+        }
     }
 
     async fn status(&self) -> Result<Option<kamiroh_domain::AgentStatus>, AgentError> {
@@ -607,6 +639,86 @@ mod tests {
 
     /// The front gives a request 30s; waiting longer means the caller is
     /// answered by a timeout rather than by the agent.
+    /// A settled agent is reported as it is, in one round trip: `agent.wait`
+    /// answers at once when the agent is *already* in one of the states asked
+    /// for, verified against herdr 0.8.0. If it only fired on transitions, an
+    /// agent that was already blocked would never be reported.
+    #[tokio::test]
+    async fn awaiting_reports_a_blocked_agent_and_asks_only_once() {
+        let herdr = FakeHerdr::answering(move |request| {
+            let method = request["method"].as_str().unwrap_or_default().to_owned();
+            Box::pin(async move {
+                Some(match method.as_str() {
+                    "agent.wait" => prompted("blocked"),
+                    _ => r#"{"id":"x","result":{}}"#.to_owned(),
+                })
+            })
+        })
+        .await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        let settled = agent.await_settled(Duration::from_secs(1)).await.unwrap();
+
+        assert_eq!(settled, Some(AgentStatus::Blocked));
+        let sent = herdr.requests().await;
+        assert_eq!(sent.len(), 1, "one round trip, not a check plus a wait");
+        assert_eq!(sent[0]["method"], "agent.wait");
+        assert_eq!(sent[0]["params"]["timeout_ms"], 1000);
+        let until: Vec<&str> = sent[0]["params"]["until"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|state| state.as_str().unwrap())
+            .collect();
+        assert!(until.contains(&"blocked"), "{until:?}");
+        assert!(until.contains(&"idle"), "{until:?}");
+        assert!(
+            !until.contains(&"working"),
+            "working is not settled: {until:?}"
+        );
+    }
+
+    /// Running out of patience is a statement about the wait, not the agent —
+    /// the same distinction M1 had to make for `agent.prompt`. Still working,
+    /// and the caller loses nothing by asking again.
+    #[tokio::test]
+    async fn an_expired_await_is_still_working_rather_than_a_failure() {
+        let herdr = FakeHerdr::answering(move |_request| {
+            Box::pin(async move {
+                Some(r#"{"id":"1","error":{"code":"timeout","message":"timed out waiting for agent status"}}"#.to_owned())
+            })
+        })
+        .await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        assert_eq!(
+            agent.await_settled(Duration::from_secs(1)).await.unwrap(),
+            Some(AgentStatus::Busy)
+        );
+    }
+
+    /// A refusal that is not a timeout is a real failure, and must not be
+    /// dressed up as "still working".
+    #[tokio::test]
+    async fn an_unreachable_runtime_while_awaiting_is_an_error() {
+        let herdr = FakeHerdr::answering(move |_request| {
+            Box::pin(async move {
+                Some(
+                    r#"{"id":"1","error":{"code":"pane_not_found","message":"no such pane"}}"#
+                        .to_owned(),
+                )
+            })
+        })
+        .await;
+        let agent = HerdrAgent::new(Client::new(herdr.path()), "w1:p1");
+
+        let error = agent
+            .await_settled(Duration::from_secs(1))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AgentError::Unavailable { .. }), "{error:?}");
+    }
+
     #[test]
     fn default_patience_leaves_room_under_the_front_timeout() {
         assert!(

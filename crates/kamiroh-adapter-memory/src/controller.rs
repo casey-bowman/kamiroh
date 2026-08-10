@@ -79,6 +79,11 @@ impl AgentController for EchoController {
         match message {
             ControlMessage::Prompt(payload) => Ok(ControlReply::Output(payload)),
             ControlMessage::Status => Ok(ControlReply::Status(*status)),
+            // Nothing here ever works, so it has already settled. Answering
+            // immediately is right for *this* model and is not what a real
+            // controller does — it bounds the wait so a caller polling a
+            // no-opinion agent cannot spin. See `AgentActor`.
+            ControlMessage::AwaitSettled => Ok(ControlReply::Status(*status)),
             ControlMessage::StopWaiting => {
                 *status = AgentStatus::Idle;
                 Ok(ControlReply::Accepted)

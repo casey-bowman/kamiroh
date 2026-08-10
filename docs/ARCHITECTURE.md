@@ -255,6 +255,28 @@ what keeps the domain RNG-free — `kamiroh-adapter-fs` supplies `getrandom`.
 `ParseNodeSecretError` carries no fragment of its input, not even the offending
 character, because that input is key material and errors get logged.
 
+**`AwaitSettled` is the verb for "tell me when it needs me".** A coding agent's
+work is long stretches of running punctuated by stops that need a human — three
+live runs, three permission dialogs — and without this the only way to learn
+about one is to keep asking. It answers with `ControlReply::Status`, so there is
+no new reply: `Blocked` means it needs a human, `Idle` means it finished, `Busy`
+means patience ran out and the caller should ask again.
+
+**It reports state rather than delivering an event, and that is the design.**
+A caller that was asleep, or on a train, has missed nothing — its next question
+returns the truth. Delivering events would mean the opposite: a transition
+missed while disconnected is gone, and recovering it needs state-on-reconnect,
+which is this verb again. It also carries **no timeout**, because how long a node
+holds an actor open is the node's business and a peer that could name the number
+could name a large one.
+
+The alternative was a streaming front that pushes events down a held-open
+connection. It was declined for two reasons that landed the same way: asking for
+state is self-healing across a caller's absences, and a connection that closes
+after each reply keeps the allowlist checked per request — so `SIGHUP` revocation
+still takes effect immediately, where a long-lived subscription authorised once
+would keep serving a peer removed hours ago.
+
 **The verbs say what kamiroh does, not what it wishes it did.** `Detach` was
 called `Shutdown` until P1, and its doc said "ask the agent to stop". It stops
 the *controller actor*; the agent carries on, which the P2 run measured — an
@@ -274,7 +296,8 @@ enough to need no such caveat, which is the standard the other three are held
 to. Its byte did not move either (`3`).
 
 **`Payload` and the agent-agnostic boundary.** kamiroh fixes the control *verbs*
-(`Prompt`, `Status`, `StopWaiting`, `Detach`) and leaves the *content* opaque: a
+(`Prompt`, `Status`, `AwaitSettled`, `StopWaiting`, `Detach`) and leaves the
+*content* opaque: a
 `Payload` is bytes plus a content type, interpreted only by the agent behind the
 controller. `Payload::text` is a convenience for the common case, **not** a claim
 that agents are text-in/text-out. This is the deliberate reading of
@@ -608,8 +631,27 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
   timing. Stopping is requested from another task: the mailbox is bounded, and an
   actor awaiting a send into its own mailbox from inside a handler cannot drain
   it to make room.
-- **Nobody waiting on a prompt is left hanging.** Stop-waiting, detach, and the
-  actor's own `on_stop` each answer an outstanding prompt before dropping it.
+- **Nobody waiting is left hanging — including an awaiting caller.**
+  Stop-waiting, detach, and the actor's own `on_stop` each answer an outstanding
+  prompt *and* an outstanding `AwaitSettled` before dropping
+  them. The await matters more than the prompt here: it is the longest wait this
+  actor holds, and after a detach the actor is gone, so anything left would
+  never be answered by anyone.
+- **An await is spawned, never awaited in the handler.** It is bounded by
+  `SETTLE_PATIENCE` at 20 seconds, and twenty seconds of inline await is twenty
+  seconds in which nothing else in the mailbox moves — `Status`, `StopWaiting`
+  and `Detach` all unanswerable. Same machinery as a prompt: spawn, and report
+  back through the mailbox. It is deliberately independent of the running
+  prompt, because awaiting *while* a prompt runs is the normal case.
+- **One waiter at a time, refused rather than queued**, for the same reason as
+  concurrent prompts: two waiters would both be answered by one settle and the
+  second would hang.
+- **The controller bounds a no-opinion agent's wait, not the port.** An agent
+  whose state only moves when it runs answers `await_settled` instantly, so a
+  caller long-polling one would spin at full speed — and `EchoAgent` is the
+  production stand-in for a node with no agent runtime, not only a test double.
+  The spawned task sleeps out the remainder before answering. The port cannot do
+  this: it has no clock, and the actor must not sleep in a handler.
 - **`StopWaiting` does not touch the cached status.** It establishes that kamiroh
   is no longer waiting and nothing about the agent, which for a real runtime
   carries on working — only the *wait* was abandoned. It used to set `Idle`,

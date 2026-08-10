@@ -26,9 +26,12 @@ changed shape.
 source is fixed, and `Shutdown` is now `Detach` — the verb says what it does, and
 a detached agent is reported `unknown` rather than `done`. **What remains of P1
 is one design question:** whether the thing worth pushing to a remote operator is
-*"it needs you"* rather than more output. The vocabulary work is finished:
-`Shutdown` → `Detach`, `Interrupt` → `StopWaiting`, and neither guesses at the
-agent's state any more.
+*"it needs you"* rather than more output — **answered, and built: `AwaitSettled`,
+a long-poll.** The vocabulary work is finished too: `Shutdown` → `Detach`,
+`Interrupt` → `StopWaiting`, and neither guesses at the agent's state any more.
+
+**P1 is complete pending a live run of the new verb.** What remains for phase 3
+is P2's other half (the two-machine NAT test, open decision 2) and P4.
 
 **The lettered plan is finished.** A→J are all complete.
 
@@ -57,6 +60,95 @@ reaches a coding agent that Herdr is managing. `EchoAgent` remains for nodes
 with no agent runtime, and for tests.
 
 ## Done
+
+**P1 (third slice) — `AwaitSettled`, the verb for "tell me when it needs me"**
+
+P2 measured what a coding agent's work actually looks like: long stretches of
+running punctuated by stops that need a human — three live runs, three permission
+dialogs. Until now the only way to learn about one was to keep asking. Now a
+caller says "tell me when it settles" and the node holds the request until it
+does, or for twenty seconds, whichever comes first.
+
+**Long-poll rather than push, and Casey chose it after the trade was laid out.**
+The alternative was a streaming front: keep the console's connection open and let
+the host send events down it. Two arguments landed the same way against it.
+
+- **Asking for state is self-healing; delivering events is not.** A caller in a
+  tunnel misses a *transition* permanently, and recovering it needs
+  state-on-reconnect — which is this verb again, bolted onto a push. Asking "what
+  is it now" is idempotent: come back, ask, be correct.
+- **A connection that closes after each reply keeps the allowlist checked per
+  request.** That is what makes `SIGHUP` revocation immediate today. A
+  subscription is authorised *once*, so a peer removed at hour two keeps
+  receiving an agent's state until someone notices — a trust change wearing the
+  costume of a performance feature, and the same shape as everything else this
+  pass has been removing.
+
+Push's remaining win is narrow and real: no round trip every twenty seconds, so a
+laptop's radio idles. What that round trip costs was read out of Iroh rather than
+guessed — one `Endpoint` is held for the life of the process, so a redial reuses
+the peer's addresses and hole-punched path and pays about one handshake. The real
+numbers get taken during the two-machine test, which is the only place they mean
+anything: [reachability-test.md §5a](./reachability-test.md).
+
+**No new reply, and no timeout parameter.** It answers with
+`ControlReply::Status`, which is already unambiguous — `Blocked` means it needs a
+human, `Idle` means it finished, `Busy` means patience ran out and ask again. And
+the verb carries no timeout, because how long a node holds an actor open is the
+node's business; a peer that could name the number could name a large one.
+
+**The §6d hazard was the hard part, and it is the one this repo keeps walking
+into.** Twenty seconds of inline await inside the handler would freeze the
+mailbox for twenty seconds — `Status`, `StopWaiting` and `Detach` all
+unanswerable. Slice G wrote that rule; M1 broke it while citing it. So an await
+is **spawned**, exactly as a prompt is, and reports back through the mailbox. A
+test dispatches `Status` and `Detach` while an await is outstanding and requires
+both to answer.
+
+**Three consequences that had to be decided rather than discovered:**
+
+- **`abandon` covers awaits too.** §6d says nobody waiting is left hanging, and
+  an await is the longest wait this actor holds — after a `Detach` the actor is
+  gone, so anything left would never be answered by anyone. It also keeps
+  `StopWaiting` honest: a verb named for giving up a wait that left one running
+  would be its own small lie.
+- **The controller bounds a no-opinion agent, not the port.** An agent whose
+  state only moves when it runs answers instantly, so a caller long-polling one
+  would spin at full speed — and `EchoAgent` is the production stand-in for a
+  node with no agent runtime, not only a test double. The spawned task sleeps out
+  the remainder. The port cannot do this: it has no clock, and the actor must not
+  sleep in a handler.
+- **One waiter at a time, refused rather than queued** — two would both be
+  answered by one settle and the second would hang. Same reasoning as concurrent
+  prompts.
+
+**The substrate was checked before the design, and it moved the design twice.**
+`events.subscribe` looked like the primitive; `agent.wait` turned out to fit
+kamiroh's existing client exactly — one request, one reply, connection closes —
+and it takes a *set* of states rather than one. And it **answers at once when the
+agent is already in one of them**, rather than waiting for a fresh transition,
+which is the difference between reporting an already-blocked agent and never
+reporting it. Verified against herdr 0.8.0, because the two behaviours are
+indistinguishable from the documentation.
+
+**A measurement trap worth recording, because it invalidated an earlier
+conclusion.** Probing that socket with `printf | nc` half-closes stdin, and Herdr
+drops a long-running request when a client does that. Every long call looked like
+it returned nothing. Held open — which is what kamiroh's own client does — the
+same requests work. That retroactively invalidates the evidence used to conclude
+the first P1 live run's failure "was not kamiroh's": that probe proved nothing.
+Corrected below.
+
+**Raised, not fixed:** the `Finished` handler sets `status = Idle` when a run
+*fails*, directly under a comment saying that claiming `Idle` would invite
+another prompt into the same failure. The comment and the code disagree, and it
+is the same class this pass has removed four times. Out of scope here; worth a
+look.
+
+**Verified:** 203 tests, fmt and clippy clean. The await tests run under paused
+time — the first version genuinely slept twenty real seconds while its own
+comment claimed otherwise, so the actor now measures against `tokio::time` rather
+than `std::time`, the clock it actually sleeps on.
 
 **P1 (second slice) — the verbs now say what they do**
 
@@ -255,6 +347,13 @@ the cause of the first run's no-op is unknown and was never kamiroh's — a dire
 `agent.get` reporting `kind: null` for a pane `agent.start` had accepted as
 `claude`. Recorded as unexplained rather than left with a plausible cause
 attached, which is how a wrong explanation becomes settled fact.
+
+**And that evidence was itself invalid**, found while probing `agent.wait` for
+the third P1 slice. The "direct `agent.prompt` returned nothing" probe used
+`printf | nc`, which half-closes stdin — and Herdr drops a long-running request
+when a client does that. Held open, the same call works. So the probe showed
+nothing about that pane, and the only honest statement left is the narrow one:
+the agent did not act on the prompt, and why is unknown.
 
 **The re-run needed a change to the script, and why is itself the finding.**
 `demos/use_it.sh` took a fixed work directory, and everything that decides

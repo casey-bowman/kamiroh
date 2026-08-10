@@ -80,6 +80,25 @@ pub enum ControlMessage {
     /// still tells the truth about the agent afterwards, and a later prompt is
     /// accepted as normal.
     StopWaiting,
+    /// Answer when the agent stops working, or when patience runs out.
+    ///
+    /// The verb for *"tell me when it needs me"*. A coding agent's work is long
+    /// stretches of running punctuated by stops that need a human, and without
+    /// this the only way to learn about one is to keep asking.
+    ///
+    /// Answered with [`ControlReply::Status`], which is why there is no new
+    /// reply: [`Blocked`](AgentStatus::Blocked) means it needs a human,
+    /// [`Idle`](AgentStatus::Idle) means it finished, and
+    /// [`Busy`](AgentStatus::Busy) means patience ran out and the caller should
+    /// ask again. Nothing is lost by asking again, because this reports *state*
+    /// rather than delivering an event — a caller that was asleep, or on a
+    /// train, learns the truth from its next question instead of having missed
+    /// something.
+    ///
+    /// **It carries no timeout, deliberately.** How long a node holds an actor
+    /// open is the node's business, not its caller's, and a peer that could name
+    /// the number could name a large one.
+    AwaitSettled,
     /// Stop controlling this agent.
     ///
     /// **The agent is not stopped** — kamiroh cannot stop one — it carries on,

@@ -94,6 +94,7 @@ impl Link for ReportingLink {
 enum Kind {
     Prompt,
     Status,
+    AwaitSettled,
     StopWaiting,
     Detach,
 }
@@ -103,6 +104,7 @@ impl Kind {
         match message {
             ControlMessage::Prompt(_) => Self::Prompt,
             ControlMessage::Status => Self::Status,
+            ControlMessage::AwaitSettled => Self::AwaitSettled,
             ControlMessage::StopWaiting => Self::StopWaiting,
             ControlMessage::Detach => Self::Detach,
         }
@@ -140,6 +142,10 @@ fn state_after(kind: Kind, result: &Result<ControlReply, LinkError>) -> PaneAgen
             // reports the truth — but "I do not know yet" is what is true at
             // the moment it is said.
             Kind::StopWaiting => PaneAgentState::Unknown,
+            // An await answers with a status, handled above, so this arm is
+            // unreachable for it in practice. If it were ever reached, the
+            // reply carried no state and `unknown` is what that means.
+            Kind::AwaitSettled => PaneAgentState::Unknown,
             Kind::Prompt | Kind::Status => PaneAgentState::Idle,
         },
     }

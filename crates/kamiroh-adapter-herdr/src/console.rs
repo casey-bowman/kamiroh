@@ -9,8 +9,8 @@
 //! agent, no line ever has to say *which* agent it means, which is what keeps
 //! the common case free of syntax.
 //!
-//! The other three [`ControlMessage`] verbs are slash commands. They exist
-//! because the Iroh front carries all four, and a local console that could only
+//! The other [`ControlMessage`] verbs are slash commands. They exist because
+//! the Iroh front carries all of them, and a local console that could only
 //! prompt would be strictly weaker than the remote path for no reason.
 
 use std::sync::Arc;
@@ -115,6 +115,7 @@ where
 const HELP: &str = "\
   <anything>     send as a prompt
   /status        ask what the agent is doing
+  /await         wait until it finishes or needs you, then say which
   /stop-waiting  give up on the current prompt; the agent carries on
   /detach        stop controlling the agent; it carries on, unwatched
   /quit          leave this console; the node keeps running
@@ -137,6 +138,7 @@ fn parse(line: &str) -> Input {
 
     match command {
         "status" => Input::Message(ControlMessage::Status),
+        "await" | "watch" => Input::Message(ControlMessage::AwaitSettled),
         "stop-waiting" => Input::Message(ControlMessage::StopWaiting),
         "interrupt" => Input::Retired(
             "/interrupt is now /stop-waiting — it never reached the agent, only kamiroh's wait",
@@ -416,6 +418,10 @@ mod tests {
         assert_eq!(parse("/quit"), Input::Quit);
         assert_eq!(parse("/exit"), Input::Quit);
         assert_eq!(parse("/nope"), Input::Unknown("/nope".to_owned()));
+        assert_eq!(
+            parse("/await"),
+            Input::Message(ControlMessage::AwaitSettled)
+        );
         assert_eq!(
             parse("plain"),
             Input::Message(ControlMessage::Prompt(Payload::text("plain")))

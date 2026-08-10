@@ -26,6 +26,19 @@ use tokio::task::AbortHandle;
 /// only place the actor awaits anything inline; everything slow is spawned.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 
+/// How long an [`AwaitSettled`](ControlMessage::AwaitSettled) waits before
+/// answering "still working, ask again".
+///
+/// **The node's number, not the caller's** — the verb carries no timeout, so a
+/// peer cannot ask this actor to hold a waiter open for an hour.
+///
+/// It must stay under the Iroh front's 30s request timeout and the transport's
+/// 30s reply timeout, or a remote caller is answered by a timeout instead of by
+/// this node; `patience_leaves_room_under_the_front_timeout` pins that. The same
+/// ceiling `HerdrAgent::DEFAULT_PATIENCE` already lives under, for the same
+/// reason.
+pub const SETTLE_PATIENCE: Duration = Duration::from_secs(20);
+
 /// What a controller actor answers with. The error half is the port's own error
 /// type, so nothing has to be translated on the way back out to `ControlApi`.
 pub(crate) type Answer = Result<ControlReply, ControllerError>;
@@ -40,12 +53,21 @@ struct Running {
     reply: Option<ReplySender<Answer>>,
 }
 
+/// A caller waiting to be told the agent has settled.
+struct Awaiting {
+    /// Aborts the task waiting on [`Agent::await_settled`].
+    abort: AbortHandle,
+    /// Where the answer goes once the agent settles — or why it will not.
+    reply: Option<ReplySender<Answer>>,
+}
+
 /// One agent's controller.
 pub(crate) struct AgentActor {
     name: ActorName,
     status: AgentStatus,
     agent: Arc<dyn Agent>,
     running: Option<Running>,
+    awaiting: Option<Awaiting>,
 }
 
 impl AgentActor {
@@ -56,14 +78,33 @@ impl AgentActor {
             status: AgentStatus::Idle,
             agent,
             running: None,
+            awaiting: None,
         }
     }
 
-    /// Abandons any in-flight prompt, telling its caller why.
+    /// Abandons any in-flight prompt **and any pending await**, telling their
+    /// callers why.
     ///
     /// The abort is the reason [`Agent::run`] must be cancel-safe: the task is
     /// dropped wherever it happened to be suspended.
+    ///
+    /// **Awaits are included deliberately.** §6d's rule is that nobody waiting
+    /// is left hanging, and an await is the longest wait this actor holds. After
+    /// a `Detach` the actor is gone, so anything left here would never be
+    /// answered by anyone — it would sit until its caller's own timeout, with no
+    /// explanation. It also keeps `StopWaiting` honest: a verb named for giving
+    /// up a wait that left one running would be its own small lie.
     fn abandon(&mut self, reason: &str) {
+        if let Some(awaiting) = self.awaiting.take() {
+            awaiting.abort.abort();
+            if let Some(reply) = awaiting.reply {
+                reply.send(Err(ControllerError::Rejected {
+                    actor: self.name.to_string(),
+                    reason: reason.to_owned(),
+                }));
+            }
+        }
+
         let Some(running) = self.running.take() else {
             return;
         };
@@ -74,6 +115,64 @@ impl AgentActor {
                 reason: reason.to_owned(),
             }));
         }
+    }
+
+    /// Answers when the agent settles, or when patience runs out.
+    ///
+    /// **Spawned, not awaited inline.** §6d forbids an unbounded inline await
+    /// and this one is bounded only by [`SETTLE_PATIENCE`] — twenty seconds
+    /// during which nothing else in the mailbox would move, leaving `Status`,
+    /// `StopWaiting` and `Detach` all unanswerable. That is the hazard slice G
+    /// wrote the rule for and M1 then walked into. So this uses the same
+    /// machinery a prompt does: spawn, and report back through the mailbox.
+    ///
+    /// Independent of `running` on purpose: awaiting while a prompt is in
+    /// flight is the normal case. A prompt came back `Partial{Busy}`, and this
+    /// is how a caller waits for the rest without typing at the agent again.
+    fn settle(
+        &mut self,
+        ctx: &mut Context<Self, DelegatedReply<Answer>>,
+    ) -> DelegatedReply<Answer> {
+        // One waiter at a time. Two would both be answered by one `Settled`,
+        // and the second would hang; refusing says so instead.
+        if self.awaiting.is_some() {
+            return ctx.reply(Err(ControllerError::Rejected {
+                actor: self.name.to_string(),
+                reason: "another caller is already waiting for this agent to settle".to_owned(),
+            }));
+        }
+
+        let (delegated, reply) = ctx.reply_sender();
+        let agent = Arc::clone(&self.agent);
+        let actor = ctx.actor_ref();
+
+        let task = tokio::spawn(async move {
+            // `tokio::time::Instant`, not `std::time`: the same clock this sleeps
+            // on, so a test with paused time measures what it thinks it does.
+            let started = tokio::time::Instant::now();
+            let result = agent.await_settled(SETTLE_PATIENCE).await;
+
+            // **An agent with no opinion answers instantly**, and a caller
+            // long-polling one would then spin at full speed — `EchoAgent` is
+            // the production stand-in for a node with no agent runtime, not
+            // just a test double. The bound is honoured here rather than by the
+            // port, because the port has no clock and the actor must not sleep
+            // in a handler.
+            if matches!(result, Ok(None)) {
+                let elapsed = started.elapsed();
+                if elapsed < SETTLE_PATIENCE {
+                    tokio::time::sleep(SETTLE_PATIENCE - elapsed).await;
+                }
+            }
+
+            let _ = actor.tell(Settled(result)).await;
+        });
+
+        self.awaiting = Some(Awaiting {
+            abort: task.abort_handle(),
+            reply,
+        });
+        delegated
     }
 
     /// Starts `prompt` on the agent, replying only once it finishes.
@@ -157,6 +256,8 @@ impl Message<ControlMessage> for AgentActor {
         match message {
             ControlMessage::Prompt(prompt) => self.start(prompt, ctx),
 
+            ControlMessage::AwaitSettled => self.settle(ctx),
+
             ControlMessage::Status => {
                 // Ask the agent, because this actor's view is only as fresh as
                 // the last run it finished. An agent can block without kamiroh
@@ -236,6 +337,43 @@ impl Message<ControlMessage> for AgentActor {
 /// "Finished" names the *run*, not the agent — a run can end with the agent
 /// blocked or still working, which is the whole point of [`AgentOutcome`].
 struct Finished(Result<AgentOutcome, AgentError>);
+
+/// An await finished: the agent settled, or patience ran out.
+struct Settled(Result<Option<AgentStatus>, AgentError>);
+
+impl Message<Settled> for AgentActor {
+    type Reply = ();
+
+    async fn handle(&mut self, Settled(result): Settled, _ctx: &mut Context<Self, Self::Reply>) {
+        // Absent when a `StopWaiting` or `Detach` got here first and already
+        // answered the caller. The abort races the agent's last step, so this
+        // is normal rather than a fault.
+        let Some(awaiting) = self.awaiting.take() else {
+            return;
+        };
+
+        let answer = match result {
+            Ok(Some(status)) => {
+                tracing::debug!(agent = %self.name, ?status, "agent settled");
+                // The agent is the authority on where it ended up, exactly as
+                // it is for a finished run.
+                self.status = status;
+                Ok(ControlReply::Status(status))
+            }
+            // No opinion of its own, so the cached view is the best answer
+            // there is. The bound was already honoured in the task.
+            Ok(None) => Ok(ControlReply::Status(self.status)),
+            Err(error) => {
+                tracing::warn!(agent = %self.name, %error, "waiting on the agent failed");
+                Err(ControllerError::Backend(Box::new(error)))
+            }
+        };
+
+        if let Some(reply) = awaiting.reply {
+            reply.send(answer);
+        }
+    }
+}
 
 impl Message<Finished> for AgentActor {
     type Reply = ();

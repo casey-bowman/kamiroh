@@ -374,6 +374,125 @@ mod tests {
         );
     }
 
+    /// The verb exists so a caller can wait without typing at the agent, so it
+    /// must work *while a prompt is running*. That is the normal case: a prompt
+    /// came back `Partial{Busy}`, and this is how you wait for the rest.
+    /// The same ceiling `HerdrAgent::DEFAULT_PATIENCE` lives under, asserted
+    /// rather than left to two constants happening to agree: the Iroh front
+    /// gives a request 30s and the transport gives a reply 30s, so a wait that
+    /// outlasted either would be answered by a timeout instead of by this node.
+    #[test]
+    fn patience_leaves_room_under_the_front_timeout() {
+        assert!(
+            crate::actor::SETTLE_PATIENCE < Duration::from_secs(30),
+            "an await must answer before the front gives up on the request"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn awaiting_works_while_a_prompt_is_still_running() {
+        let (gate, gated) = Gate::new();
+        let controller = Arc::new(KameoController::new().with_agent(agent(), gated));
+
+        let pending = dispatch_concurrently(
+            &controller,
+            agent(),
+            ControlMessage::Prompt(Payload::text("work")),
+        );
+        gate.started.notified().await;
+
+        // `GatedAgent` has no opinion, so the actor bounds the wait itself.
+        // Paused time makes that instant rather than twenty real seconds.
+        let reply = controller
+            .dispatch(&agent(), ControlMessage::AwaitSettled)
+            .await
+            .unwrap();
+        assert_eq!(reply, ControlReply::Status(AgentStatus::Busy));
+
+        gate.release.notify_one();
+        pending.await.unwrap().unwrap();
+    }
+
+    /// §6d: nobody waiting is left hanging. After a detach the actor is gone,
+    /// so an unanswered await would sit until its caller's own timeout with no
+    /// explanation — and nothing would ever answer it.
+    #[tokio::test(start_paused = true)]
+    async fn detaching_answers_a_pending_await_rather_than_leaving_it_hanging() {
+        let (_gate, gated) = Gate::new();
+        let controller = Arc::new(KameoController::new().with_agent(agent(), gated));
+
+        let awaiting = dispatch_concurrently(&controller, agent(), ControlMessage::AwaitSettled);
+        // Let the await register before detaching, or this tests nothing.
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        controller
+            .dispatch(&agent(), ControlMessage::Detach)
+            .await
+            .unwrap();
+
+        let error = awaiting.await.unwrap().unwrap_err();
+        assert!(
+            matches!(error, ControllerError::Rejected { .. }),
+            "an abandoned await must be told, got {error:?}"
+        );
+    }
+
+    /// A second waiter would be answered by the first `Settled` and then hang,
+    /// so it is refused rather than queued — the same reasoning as concurrent
+    /// prompts.
+    #[tokio::test(start_paused = true)]
+    async fn a_second_await_is_refused_rather_than_queued() {
+        let (_gate, gated) = Gate::new();
+        let controller = Arc::new(KameoController::new().with_agent(agent(), gated));
+
+        let first = dispatch_concurrently(&controller, agent(), ControlMessage::AwaitSettled);
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let error = controller
+            .dispatch(&agent(), ControlMessage::AwaitSettled)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, ControllerError::Rejected { .. }),
+            "{error:?}"
+        );
+
+        controller
+            .dispatch(&agent(), ControlMessage::Detach)
+            .await
+            .unwrap();
+        let _ = first.await.unwrap();
+    }
+
+    /// The §6d hazard this verb was most likely to reintroduce: a twenty-second
+    /// wait must not be awaited inside the handler, or nothing else in the
+    /// mailbox moves while it runs and `Status` and `Detach` become
+    /// unreachable. M1 broke this rule while citing it.
+    #[tokio::test(start_paused = true)]
+    async fn a_pending_await_does_not_wedge_the_actor() {
+        let (_gate, gated) = Gate::new();
+        let controller = Arc::new(KameoController::new().with_agent(agent(), gated));
+
+        let awaiting = dispatch_concurrently(&controller, agent(), ControlMessage::AwaitSettled);
+        tokio::task::yield_now().await;
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Both must answer while the await is outstanding.
+        let status = controller
+            .dispatch(&agent(), ControlMessage::Status)
+            .await
+            .unwrap();
+        assert!(matches!(status, ControlReply::Status(_)));
+
+        controller
+            .dispatch(&agent(), ControlMessage::Detach)
+            .await
+            .unwrap();
+        let _ = awaiting.await.unwrap();
+    }
+
     #[tokio::test]
     async fn detaching_stops_the_actor_and_later_messages_are_refused() {
         let controller = KameoController::new().with_agent(agent(), EchoAgent);

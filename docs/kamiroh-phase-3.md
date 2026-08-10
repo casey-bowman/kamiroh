@@ -146,8 +146,23 @@ substrate rather than by preference.** Read out of Herdr's own API schema:
   pushing *state* is nearly free. Pushing *output* is the expensive one, and it
   is the one this run suggests matters less.
 
-  **This is the design question P1 should actually answer**, and it is the only
-  one of the three still open. The P1 read-fix run strengthened it: a prompt that
+  **~~This is the design question P1 should actually answer.~~ Answered:
+  long-poll.** `AwaitSettled` — a caller asks "tell me when it settles", the node
+  holds the request up to 20 seconds and answers with a status. Push was
+  declined, and the two arguments landed the same way: asking for *state* is
+  self-healing across a caller's absences, where a missed *event* is gone; and a
+  connection that closes after each reply keeps the allowlist checked per
+  request, so `SIGHUP` revocation still takes effect immediately. A long-lived
+  subscription is authorised once and would keep serving a peer removed hours
+  ago — a trust change disguised as a performance feature.
+
+  Push's remaining win is narrow and real: no round trip every 20 seconds, so a
+  battery-powered laptop's radio idles. What that costs was measured from Iroh's
+  source rather than guessed — one Endpoint is held for the process, so a redial
+  reuses the peer's addresses and hole-punched path and pays about one handshake
+  round trip. [reachability-test.md §5a](./reachability-test.md) takes the real
+  numbers during the two-machine test, since that is the only place they mean
+  anything. The P1 read-fix run strengthened it: a prompt that
   settled immediately made kamiroh answer `Output` carrying a splash screen — a
   finished-looking reply to a task that never ran. Scraped terminal text can be
   confidently wrong; a state cannot be wrong in the same way.

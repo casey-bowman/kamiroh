@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! u8   version
-//! u8   kind          1 Prompt · 2 Status · 3 StopWaiting · 4 Detach
+//! u8   kind          1 Prompt · 2 Status · 3 StopWaiting · 4 Detach · 5 AwaitSettled
 //! u8   actor_len     <= MAX_ACTOR_NAME_LEN
 //! ..   actor         UTF-8
 //! -- Prompt only:
@@ -62,6 +62,7 @@ mod request_kind {
     pub const STATUS: u8 = 2;
     pub const STOP_WAITING: u8 = 3;
     pub const DETACH: u8 = 4;
+    pub const AWAIT_SETTLED: u8 = 5;
 }
 
 mod reply_kind {
@@ -266,6 +267,7 @@ pub fn encode_request(agent: &ActorName, message: &ControlMessage) -> Vec<u8> {
         ControlMessage::Status => request_kind::STATUS,
         ControlMessage::StopWaiting => request_kind::STOP_WAITING,
         ControlMessage::Detach => request_kind::DETACH,
+        ControlMessage::AwaitSettled => request_kind::AWAIT_SETTLED,
     });
     // `ActorName` is capped at 64 bytes by the domain, so a u8 length is safe.
     put_bytes(&mut out, agent.as_str().as_bytes(), LenPrefix::U8);
@@ -293,6 +295,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<(ActorName, ControlMessage), Codec
         request_kind::STATUS => ControlMessage::Status,
         request_kind::STOP_WAITING => ControlMessage::StopWaiting,
         request_kind::DETACH => ControlMessage::Detach,
+        request_kind::AWAIT_SETTLED => ControlMessage::AwaitSettled,
         got => {
             return Err(CodecError::Discriminant {
                 field: "request kind",
@@ -414,6 +417,7 @@ mod tests {
             ControlMessage::Status,
             ControlMessage::StopWaiting,
             ControlMessage::Detach,
+            ControlMessage::AwaitSettled,
             ControlMessage::Prompt(Payload::text("build the thing")),
         ];
         for message in messages {

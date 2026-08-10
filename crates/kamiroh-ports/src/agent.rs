@@ -27,6 +27,8 @@
 //! aborted, so [`run`](Agent::run) must leave no state that a dropped future
 //! would corrupt.
 
+use std::time::Duration;
+
 use async_trait::async_trait;
 use kamiroh_domain::{AgentStatus, Payload};
 
@@ -65,6 +67,28 @@ pub trait Agent: Send + Sync + 'static {
     /// what it had. That is the default, and it is right for any agent whose
     /// state only changes when it is run.
     async fn status(&self) -> Result<Option<AgentStatus>, AgentError> {
+        Ok(None)
+    }
+
+    /// Waits until the agent stops working, and says what it settled at.
+    ///
+    /// "Settled" means a state a caller can act on: finished, or waiting for a
+    /// human. Still working is not settled, and neither is starting — a caller
+    /// told an agent is ready when it is not is the mistake §6c already forbids
+    /// elsewhere.
+    ///
+    /// `patience` bounds the wait. Running out is **not** a failure: it means
+    /// "still working, ask again", and the caller loses nothing by asking,
+    /// because this reports state rather than delivering an event.
+    ///
+    /// `None` means "no better answer than yours" — the same contract as
+    /// [`status`](Self::status). An agent whose state only moves when it runs
+    /// has nothing to wait for, so the default says so immediately rather than
+    /// pretending to wait. **A caller must therefore not treat this as
+    /// self-throttling**: the controller is what turns a `None` into a bounded
+    /// wait, so that a long-poll against such an agent cannot spin.
+    async fn await_settled(&self, patience: Duration) -> Result<Option<AgentStatus>, AgentError> {
+        let _ = patience;
         Ok(None)
     }
 }
@@ -110,6 +134,10 @@ impl Agent for std::sync::Arc<dyn Agent> {
 
     async fn status(&self) -> Result<Option<AgentStatus>, AgentError> {
         (**self).status().await
+    }
+
+    async fn await_settled(&self, patience: Duration) -> Result<Option<AgentStatus>, AgentError> {
+        (**self).await_settled(patience).await
     }
 }
 
@@ -175,6 +203,13 @@ mod tests {
         async fn status(&self) -> Result<Option<AgentStatus>, AgentError> {
             Ok(Some(AgentStatus::Blocked))
         }
+
+        async fn await_settled(
+            &self,
+            _patience: Duration,
+        ) -> Result<Option<AgentStatus>, AgentError> {
+            Ok(Some(AgentStatus::Blocked))
+        }
     }
 
     /// The `Arc<dyn Agent>` forwarding impl must forward **every** method.
@@ -190,6 +225,19 @@ mod tests {
         assert_eq!(direct.status().await.unwrap(), Some(AgentStatus::Blocked));
         assert_eq!(
             boxed.status().await.unwrap(),
+            Some(AgentStatus::Blocked),
+            "Arc<dyn Agent> answered from the default instead of the agent"
+        );
+    }
+
+    /// The same guard for the method added after `status`, because the bug is
+    /// a property of defaulted methods rather than of any one of them.
+    #[tokio::test]
+    async fn the_arc_impl_forwards_await_settled_and_not_the_default() {
+        let boxed: Arc<dyn Agent> = Arc::new(Opinionated);
+
+        assert_eq!(
+            boxed.await_settled(Duration::from_secs(1)).await.unwrap(),
             Some(AgentStatus::Blocked),
             "Arc<dyn Agent> answered from the default instead of the agent"
         );
@@ -215,5 +263,11 @@ mod tests {
         }
 
         assert_eq!(Quiet.status().await.unwrap(), None);
+        assert_eq!(
+            Quiet.await_settled(Duration::from_secs(1)).await.unwrap(),
+            None,
+            "an agent with nothing to wait for says so at once; the controller \
+             is what bounds the wait"
+        );
     }
 }

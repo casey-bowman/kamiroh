@@ -184,6 +184,45 @@ impl Client {
             .to_owned())
     }
 
+    /// Waits until the agent reaches one of `until`, or `patience` expires.
+    ///
+    /// **It answers at once if the agent is already in one of those states**,
+    /// rather than waiting for a fresh transition into one — verified against
+    /// herdr 0.8.0, because the two behaviours are indistinguishable from the
+    /// documentation and the difference decides whether a caller must check the
+    /// state first. It need not: an agent that is already blocked is reported
+    /// immediately.
+    ///
+    /// An expired wait comes back as `ClientError::Refused` with code
+    /// `timeout`, which is a statement about the wait and not about the agent —
+    /// the same shape `prompt_agent` already has to read.
+    pub async fn wait_for_agent(
+        &self,
+        target: &str,
+        until: &[PaneAgentState],
+        patience: Duration,
+    ) -> Result<PaneAgentState, ClientError> {
+        let until: Vec<&str> = until.iter().map(|state| state.as_str()).collect();
+        let result = self
+            .request(
+                "agent.wait",
+                serde_json::json!({
+                    "target": target,
+                    "until": until,
+                    "timeout_ms": patience.as_millis() as u64,
+                }),
+            )
+            .await?;
+
+        Ok(PaneAgentState::from_wire(
+            result
+                .get("agent")
+                .and_then(|agent| agent.get("agent_status"))
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default(),
+        ))
+    }
+
     /// Opens a connection, writes one request, reads the one response.
     ///
     /// Returns the `result` object, which every caller here reads a field out
