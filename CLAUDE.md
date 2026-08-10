@@ -1,9 +1,16 @@
 # kamiroh
 
 Kameo actors for agents over Iroh. Peer actors addressable by name and endpoint,
-driven locally or across the network. A control layer for long-running coding
-agents — **kamiroh routes and authorises; it never interprets what an agent
-does.**
+driven locally or across the network — **kamiroh routes and authorises; it never
+interprets what an agent does.**
+
+**What it is for, stated by Casey on 2026-08-10 and wider than the plans had
+assumed:** agents running peer-to-peer apps on nodes distributed across the
+internet, mostly *delegating* to each other — A asks B and waits — with Kameo's
+actor model as the interaction metaphor. A human driving a coding agent from a
+pane is one case, not the case. Herdr is optional at both ends. See
+`docs/kamiroh-phase-4.md`, which scores kamiroh against that purpose; the earlier
+plans were written for the narrower one.
 
 This file is loaded every session, so it stays short and points at detail rather
 than repeating it. **Start by reading `docs/LOOP.md`** — it opens with what is
