@@ -10,28 +10,54 @@
 
 ## Current phase
 
-**Phase 2 is finished too** — M1–M4 and the review queue. The current pass is
-[kamiroh-phase-3.md](./kamiroh-phase-3.md), which found that the *control
-vocabulary* is now the narrowest part of the system: a caller cannot read a long
-task's output without sending another prompt at it, and `Shutdown` stops
-kamiroh's actor while the coding agent carries on. Both were read out of the
-code rather than remembered.
+**Phase 2 is finished** — M1–M4 and the review queue. The current pass is
+[kamiroh-phase-3.md](./kamiroh-phase-3.md).
 
-**Phase 3's own question — P1 or P2 — was decided: P2, the "use it" half.** It
-is done, and it corrected the plan that proposed it (see P2 below). Two of P1's
-three design questions turned out to be settled by Herdr's API, and the third
-changed shape.
+### Where to pick up
 
-**P1 has started, with the bug P2 found rather than with a design.** The read
-source is fixed, and `Shutdown` is now `Detach` — the verb says what it does, and
-a detached agent is reported `unknown` rather than `done`. **What remains of P1
-is one design question:** whether the thing worth pushing to a remote operator is
-*"it needs you"* rather than more output — **answered, and built: `AwaitSettled`,
-a long-poll.** The vocabulary work is finished too: `Shutdown` → `Detach`,
-`Interrupt` → `StopWaiting`, and neither guesses at the agent's state any more.
+**P1 is done, in code and demonstrated.** It found that the control vocabulary
+was the narrowest part of the system, and closed all of it:
 
-**P1 is complete pending a live run of the new verb.** What remains for phase 3
-is P2's other half (the two-machine NAT test, open decision 2) and P4.
+| | was | is |
+|---|---|---|
+| the read | refused whenever the agent worked | source chosen by state, with a fallback |
+| `Shutdown` | claimed to stop the agent | `Detach` — stops kamiroh controlling it |
+| `Interrupt` | claimed to reach the agent | `StopWaiting` — gives up kamiroh's wait |
+| watching a task | ask repeatedly, or not at all | `AwaitSettled`, a long-poll |
+
+Everything above is live-verified against a real `claude` agent, not only
+unit-tested. Neither rename moved a wire byte. The README was reworded to match.
+
+**Phase 3's own question was decided along the way**: P2's "use it" half first,
+then P1. Both of P1's earlier design questions turned out to be settled by
+Herdr's API rather than by preference, and the third — push versus poll — was put
+to Casey with the trade laid out and answered *long-poll*.
+
+**What is next, in the order it is worth doing:**
+
+1. **P2's other half — the two-machine NAT test.** The only claim in the README
+   that has never been demonstrated, and now also the only place the dial-cost
+   numbers P1 wants can be measured. Procedure and both measurements:
+   [reachability-test.md](./reachability-test.md), §5a for the timings. Needs a
+   second machine on a different network; a phone hotspot is the whole trick.
+2. **P4 — publishing**, whose blocking item (the README's lifecycle claim) is
+   now fixed. What remains on that checklist is the crates.io logo URL and the
+   repository-owner question, both written up in kamiroh-phase-3.md §P4.
+3. **Nothing else is queued.** Phase 3's milestones are otherwise complete.
+
+**One thing raised and not taken up:** whether kamiroh should say how *confident*
+a status is, given M3 measured `codex` reporting a permission prompt as `idle`
+where `claude` reports `blocked`. It is a candidate at the foot of
+OPEN-DECISIONS.md, and it matters more now that `AwaitSettled` exists — a kind
+whose manifest misses `blocked` makes that verb quietly useless. Measuring a
+second agent kind would settle whether it is real.
+
+**The recurring defect this pass kept finding, worth carrying forward.** Six
+times, the code was right and something *describing* it promised more — two verb
+names, two pane mappings, three cached statuses, and the README. Every one leaned
+the same way: telling an operator an agent was fine when it was not. When
+touching this codebase, the doc comment and the sidebar label are as likely to be
+wrong as the logic, and they are the parts no test looks at.
 
 **The lettered plan is finished.** A→J are all complete.
 
@@ -1231,7 +1257,7 @@ exit path, since a stranded one is a live secret loose in the key directory.
 ```
 cargo fmt --all --check                        # clean
 cargo clippy --workspace --all-targets -- -D warnings   # zero warnings
-cargo test  --workspace --no-fail-fast         # 188 passed, 0 failed (as of the posture review)
+cargo test  --workspace --no-fail-fast         # 204 passed, 0 failed (as of P1)
 cargo tree  -p kamiroh-domain -e normal        # no dependencies at all
 cargo tree  -p kamiroh-ports  -e normal        # kamiroh-domain + async-trait + thiserror only
 cargo tree  -i kameo -e normal                 # exactly one consumer: kamiroh-adapter-kameo
