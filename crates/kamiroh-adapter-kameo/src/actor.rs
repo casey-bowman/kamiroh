@@ -195,7 +195,21 @@ impl Message<ControlMessage> for AgentActor {
 
             ControlMessage::Interrupt => {
                 self.abandon("the prompt was interrupted");
-                self.status = AgentStatus::Idle;
+                // **The status is deliberately not touched.** Interrupting
+                // establishes one thing — kamiroh is no longer waiting — and
+                // nothing at all about the agent, which for a real runtime
+                // carries on working; only the wait was abandoned. Setting
+                // `Idle` here claimed the agent was ready for work, which is
+                // the direction §6d and §6e both call dangerous.
+                //
+                // Leaving it means the cached value stays `Busy` when a run was
+                // abandoned, and unchanged when there was nothing to abandon —
+                // both of which are what kamiroh actually knows. `Status` then
+                // corrects it from the agent whenever the agent has an opinion.
+                //
+                // Safe to be conservative here because the status is a
+                // *report*, never a gate: `start` refuses a second prompt on
+                // `running.is_some()`, so a stale `Busy` never blocks one.
                 ctx.reply(Ok(ControlReply::Accepted))
             }
 

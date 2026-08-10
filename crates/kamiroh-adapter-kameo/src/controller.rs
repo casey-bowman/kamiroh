@@ -299,7 +299,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupt_abandons_the_running_prompt_and_returns_the_agent_to_idle() {
+    /// Interrupting abandons the wait and says nothing about the agent.
+    ///
+    /// It used to answer `Idle`, which claimed the agent was ready for work.
+    /// For a real runtime that is false — only kamiroh's wait was abandoned —
+    /// and it is the direction §6e calls dangerous. The cached `Busy` stands
+    /// until something can actually ask the agent.
+    async fn interrupt_abandons_the_running_prompt_without_claiming_the_agent_is_idle() {
         let (gate, gated) = Gate::new();
         let controller = Arc::new(KameoController::new().with_agent(agent(), gated));
 
@@ -322,12 +328,17 @@ mod tests {
         let error = pending.await.unwrap().unwrap_err();
         assert!(matches!(error, ControllerError::Rejected { .. }));
 
+        // `Gate` has no opinion of its own (`status` returns `None`), so this is
+        // purely what the controller cached — and it must not have invented
+        // `Idle`. A prompt is still accepted afterwards, below: the status is a
+        // report, not a gate.
         assert_eq!(
             controller
                 .dispatch(&agent(), ControlMessage::Status)
                 .await
                 .unwrap(),
-            ControlReply::Status(AgentStatus::Idle)
+            ControlReply::Status(AgentStatus::Busy),
+            "interrupting says nothing about the agent, so it must not claim idle"
         );
 
         // Releasing now proves the abort was real: a merely-detached task would

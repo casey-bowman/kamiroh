@@ -509,6 +509,11 @@ Enforced by `kamiroh-adapter-herdr` and pinned by its tests:
 - **A failure reports `unknown`, never `idle`.** An unreachable peer says
   nothing about the agent behind it, and `idle` would be a guess presented as a
   fact.
+- **An accepted `Interrupt` reports `unknown`, not `idle`.** It means kamiroh
+  stopped waiting, not that the agent stopped working, and `idle` in a sidebar
+  invites someone to prompt an agent that is not ready. Self-correcting, unlike
+  detaching — the controller survives, so the next `Status` reports the truth —
+  but "I do not know yet" is what is true at the moment it is said.
 - **Detaching reports `unknown`, not `done`** — the same rule, applied to the
   case that used to break it. `Detach` stops kamiroh controlling the agent; the
   agent carries on, possibly mid-task, as the P2 run measured. Reporting `done`
@@ -601,6 +606,19 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
   it to make room.
 - **Nobody waiting on a prompt is left hanging.** Interrupt, detach, and the
   actor's own `on_stop` each answer an outstanding prompt before dropping it.
+- **`Interrupt` does not touch the cached status.** It establishes that kamiroh
+  is no longer waiting and nothing about the agent, which for a real runtime
+  carries on working — only the *wait* was abandoned. It used to set `Idle`,
+  claiming the agent was ready for work. Leaving the value alone means it stays
+  `Busy` when a run was abandoned and unchanged when there was nothing to
+  abandon, which is what kamiroh actually knows; `Status` then corrects it from
+  the agent whenever the agent has an opinion.
+
+  Being conservative is safe here **because the status is a report, not a
+  gate**: `start` refuses a second prompt on `running.is_some()`, so a stale
+  `Busy` never blocks one. That is what makes "possibly stale" strictly better
+  than "confidently wrong" in this direction. Mutation-tested — restoring the
+  `Idle` assignment fails one test and only that test.
 
 ---
 

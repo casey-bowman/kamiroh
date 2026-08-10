@@ -132,7 +132,15 @@ fn state_after(kind: Kind, result: &Result<ControlReply, LinkError>) -> PaneAgen
             // agent is doing, and `unknown` is what "I do not know" is called
             // here: the same rule §6d already applies to an unreachable peer.
             Kind::Detach => PaneAgentState::Unknown,
-            Kind::Prompt | Kind::Status | Kind::Interrupt => PaneAgentState::Idle,
+            // **`Interrupt` is the same guess, and gets the same answer.** An
+            // accepted interrupt means kamiroh stopped waiting; the agent may
+            // still be working, and `idle` in a sidebar invites someone to
+            // prompt one that is not ready. Unlike detaching, this is
+            // self-correcting — the controller survives, so the next `Status`
+            // reports the truth — but "I do not know yet" is what is true at
+            // the moment it is said.
+            Kind::Interrupt => PaneAgentState::Unknown,
+            Kind::Prompt | Kind::Status => PaneAgentState::Idle,
         },
     }
 }
@@ -352,9 +360,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupt_reports_idle_rather_than_done() {
+    /// An accepted interrupt means kamiroh stopped waiting, not that the agent
+    /// stopped working — so the pane must not say `idle` and invite someone to
+    /// prompt it. Self-correcting, unlike detaching: the controller survives,
+    /// so the next `Status` reports the truth.
+    async fn interrupt_reports_unknown_rather_than_claiming_the_agent_is_ready() {
         let seen = reported(ControlMessage::Interrupt, Ok(ControlReply::Accepted)).await;
-        assert_eq!(seen, vec![PaneAgentState::Idle]);
+        assert_eq!(seen, vec![PaneAgentState::Unknown]);
     }
 
     /// An unreachable peer says nothing about the agent behind it.
@@ -497,9 +509,13 @@ mod tests {
         while let Some(state) = receiver.recv().await {
             seen.push(state);
         }
+        // The state is incidental here — what this pins is that the link's
+        // report reached the one shared channel. `Interrupt` maps to `Unknown`;
+        // `interrupt_reports_unknown_rather_than_claiming_the_agent_is_ready`
+        // is where that mapping is the subject.
         assert_eq!(
             seen,
-            vec![PaneAgentState::Idle],
+            vec![PaneAgentState::Unknown],
             "the link's report arrived"
         );
     }

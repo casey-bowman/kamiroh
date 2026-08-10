@@ -26,9 +26,9 @@ changed shape.
 source is fixed, and `Shutdown` is now `Detach` — the verb says what it does, and
 a detached agent is reported `unknown` rather than `done`. **What remains of P1
 is one design question:** whether the thing worth pushing to a remote operator is
-*"it needs you"* rather than more output. Two smaller items are raised and
-waiting: whether `Interrupt` should be renamed too, and whether its handler
-should stop claiming `Idle` for an agent that may still be working.
+*"it needs you"* rather than more output. One smaller item is still raised and
+waiting: whether `Interrupt` should be renamed too. Its *behaviour* no longer
+guesses — that was fixed alongside the rename.
 
 **The lettered plan is finished.** A→J are all complete.
 
@@ -103,12 +103,32 @@ abandon its current work" and only abandons the run kamiroh is waiting on — bu
 the controller survives it, so `Status` still tells the truth about the agent
 afterwards. `Detach` left nothing able to answer.
 
-**One thing raised rather than fixed, because it is past the scope Casey set.**
-The `Interrupt` handler sets the cached status to `Idle`. The agent may well
-still be working, so that is a guess in the dangerous direction; it self-corrects
-whenever `Agent::status` can be reached, and stands when it cannot. Leaving the
-previous value would be more honest. It belongs with the `Interrupt` rename
-question rather than with this slice.
+**`Interrupt`'s status guess went too, on a follow-up.** The handler set the
+cached status to `Idle`, which claimed the agent was ready for work when all that
+had happened was kamiroh giving up its wait — the same guess in the same
+direction as the two above. It now touches the status at all: the value stays
+`Busy` when a run was abandoned and unchanged when there was nothing to abandon,
+and `Status` corrects it from the agent whenever the agent has an opinion.
+
+**What made the choice easy is that the status is a report, not a gate.** `start`
+refuses a second prompt on `running.is_some()`, never on the status, so a stale
+`Busy` blocks nothing — the cost of being conservative is an inaccurate reading
+until the next refresh, against the cost of being wrong, which is telling a
+remote operator an agent is free when it is mid-task. The repo's existing rules
+already pick that way twice ("a failure reports `unknown`, never `idle`"; "an
+unknown state becomes `Busy`, not `Idle`").
+
+The pane mapping went with it: an accepted `Interrupt` reports `unknown` rather
+than `idle`, for the same reason the detach mapping does. It differs in being
+self-correcting — the controller survives an interrupt, so the next `Status` puts
+it right — but `idle` is not true at the moment it is said.
+
+`EchoController` in `kamiroh-adapter-memory` keeps `Interrupt → Idle`, and that
+is not an inconsistency: it is a `HashMap` with no agent behind it, so its status
+is its whole model rather than a claim about something else.
+
+Mutation-tested: restoring the `Idle` assignment fails exactly one test, the one
+whose name now says what it is for.
 
 **Verified:** 193 tests, fmt and clippy clean, and the compiler found every
 propagation site — 26 references across six crates, exactly the shape M1
