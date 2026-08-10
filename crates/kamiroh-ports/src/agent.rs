@@ -23,7 +23,7 @@
 //!
 //! # Cancellation
 //!
-//! Cancellation is by drop: an interrupted or shut-down agent has its task
+//! Cancellation is by drop: a given-up-on or detached agent has its task
 //! aborted, so [`run`](Agent::run) must leave no state that a dropped future
 //! would corrupt.
 
@@ -34,7 +34,7 @@ use kamiroh_domain::{AgentStatus, Payload};
 ///
 /// `run` borrows `&self` rather than `&mut self` because a controller runs it
 /// as a separate task, so the controller's mailbox stays live and an
-/// [`Interrupt`](kamiroh_domain::ControlMessage::Interrupt) can land while the
+/// [`StopWaiting`](kamiroh_domain::ControlMessage::StopWaiting) can land while the
 /// agent is still working. An implementation needing mutable state should hold
 /// it behind its own lock.
 #[async_trait]

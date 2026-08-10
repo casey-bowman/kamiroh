@@ -3,7 +3,7 @@
 //! # Agent-agnostic payloads
 //!
 //! kamiroh makes no assumption about what an agent does, so the *verbs* here are
-//! fixed (prompt / status / interrupt / detach) while the *content* is opaque:
+//! fixed (prompt / status / stop-waiting / detach) while the *content* is opaque:
 //! a [`Payload`] is bytes plus a content type, and only the agent behind the
 //! controller interprets it. `Payload::text` exists as a convenience for the
 //! common text-in/text-out case, not as a statement that agents are textual.
@@ -71,12 +71,15 @@ pub enum ControlMessage {
     Status,
     /// Stop waiting on the agent's current work.
     ///
-    /// **This does not reach the agent.** It abandons the run kamiroh is
-    /// waiting on and answers whoever was waiting; the agent carries on. Herdr
-    /// offers no way to interrupt one without per-kind keystrokes, which
-    /// agent-agnostic forbids. The controller survives, so [`Self::Status`]
-    /// still tells the truth about the agent afterwards.
-    Interrupt,
+    /// Named for what it does, which `Interrupt` was not: it abandons the run
+    /// kamiroh is waiting on and answers whoever was waiting. **The agent
+    /// carries on** — Herdr offers no way to interrupt one without per-kind
+    /// keystrokes, which agent-agnostic forbids.
+    ///
+    /// Unlike [`Self::Detach`] the controller survives, so [`Self::Status`]
+    /// still tells the truth about the agent afterwards, and a later prompt is
+    /// accepted as normal.
+    StopWaiting,
     /// Stop controlling this agent.
     ///
     /// **The agent is not stopped** — kamiroh cannot stop one — it carries on,

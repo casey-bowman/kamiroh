@@ -183,7 +183,7 @@ mod tests {
         let (service, controller) = service(vec![]);
 
         service
-            .deliver(Origin::local_front(), &agent(), ControlMessage::Interrupt)
+            .deliver(Origin::local_front(), &agent(), ControlMessage::StopWaiting)
             .await
             .unwrap();
 

@@ -20,7 +20,7 @@
 //!
 //! ```text
 //! u8   version
-//! u8   kind          1 Prompt · 2 Status · 3 Interrupt · 4 Detach
+//! u8   kind          1 Prompt · 2 Status · 3 StopWaiting · 4 Detach
 //! u8   actor_len     <= MAX_ACTOR_NAME_LEN
 //! ..   actor         UTF-8
 //! -- Prompt only:
@@ -60,7 +60,7 @@ pub const MAX_FRAME_LEN: usize = 1024 * 1024;
 mod request_kind {
     pub const PROMPT: u8 = 1;
     pub const STATUS: u8 = 2;
-    pub const INTERRUPT: u8 = 3;
+    pub const STOP_WAITING: u8 = 3;
     pub const DETACH: u8 = 4;
 }
 
@@ -264,7 +264,7 @@ pub fn encode_request(agent: &ActorName, message: &ControlMessage) -> Vec<u8> {
     out.push(match message {
         ControlMessage::Prompt(_) => request_kind::PROMPT,
         ControlMessage::Status => request_kind::STATUS,
-        ControlMessage::Interrupt => request_kind::INTERRUPT,
+        ControlMessage::StopWaiting => request_kind::STOP_WAITING,
         ControlMessage::Detach => request_kind::DETACH,
     });
     // `ActorName` is capped at 64 bytes by the domain, so a u8 length is safe.
@@ -291,7 +291,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<(ActorName, ControlMessage), Codec
     let message = match kind {
         request_kind::PROMPT => ControlMessage::Prompt(read_payload(&mut reader)?),
         request_kind::STATUS => ControlMessage::Status,
-        request_kind::INTERRUPT => ControlMessage::Interrupt,
+        request_kind::STOP_WAITING => ControlMessage::StopWaiting,
         request_kind::DETACH => ControlMessage::Detach,
         got => {
             return Err(CodecError::Discriminant {
@@ -412,7 +412,7 @@ mod tests {
     fn every_request_kind_round_trips() {
         let messages = [
             ControlMessage::Status,
-            ControlMessage::Interrupt,
+            ControlMessage::StopWaiting,
             ControlMessage::Detach,
             ControlMessage::Prompt(Payload::text("build the thing")),
         ];

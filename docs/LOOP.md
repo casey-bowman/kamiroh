@@ -26,9 +26,9 @@ changed shape.
 source is fixed, and `Shutdown` is now `Detach` — the verb says what it does, and
 a detached agent is reported `unknown` rather than `done`. **What remains of P1
 is one design question:** whether the thing worth pushing to a remote operator is
-*"it needs you"* rather than more output. One smaller item is still raised and
-waiting: whether `Interrupt` should be renamed too. Its *behaviour* no longer
-guesses — that was fixed alongside the rename.
+*"it needs you"* rather than more output. The vocabulary work is finished:
+`Shutdown` → `Detach`, `Interrupt` → `StopWaiting`, and neither guesses at the
+agent's state any more.
 
 **The lettered plan is finished.** A→J are all complete.
 
@@ -58,7 +58,10 @@ with no agent runtime, and for tests.
 
 ## Done
 
-**P1 (second slice) — `Shutdown` is now `Detach`, because that is what it does**
+**P1 (second slice) — the verbs now say what they do**
+
+Two of the four verbs claimed to reach the agent and reached only kamiroh's own
+machinery. `Shutdown` is now `Detach` and `Interrupt` is now `StopWaiting`.
 
 `ControlMessage::Shutdown` was documented as "ask the agent to stop" and stopped
 the *controller actor*. The P2 run measured the gap: answered at 17:22:01, and
@@ -97,13 +100,21 @@ word that worked an hour ago: it now names its replacement and says why, while
 **sending nothing**. An alias would have kept the misleading word working, which
 is the opposite of the point.
 
-**`Interrupt` got its doc corrected and kept its name**, which was Casey's call
-and is the right asymmetry. It has the same defect — it says "ask the agent to
-abandon its current work" and only abandons the run kamiroh is waiting on — but
-the controller survives it, so `Status` still tells the truth about the agent
-afterwards. `Detach` left nothing able to answer.
+**`Interrupt` became `StopWaiting` on a follow-up.** It was held back for one
+slice, deliberately: it has the same defect — it said "ask the agent to abandon
+its current work" and only abandons the run kamiroh is waiting on — but the
+controller survives it, so `Status` can still be asked, where `Detach` left
+nothing able to answer. That asymmetry is real, and it turned out to be an
+argument about *how bad*, not about whether it was true. Held to the same
+standard as the other three, the name had to go.
 
-**`Interrupt`'s status guess went too, on a follow-up.** The handler set the
+`StopWaiting` over `Abandon`, the other candidate, because it needs no doc
+comment to be honest — "abandon" leaves *abandon what?* open, and needing a
+paragraph to explain a name is the failure this pass exists to remove. Its byte
+did not move either (`3`), and the console command follows the same pattern:
+`/stop-waiting`, with `/interrupt` explaining itself and sending nothing.
+
+**`StopWaiting`'s status guess went too.** The handler set the
 cached status to `Idle`, which claimed the agent was ready for work when all that
 had happened was kamiroh giving up its wait — the same guess in the same
 direction as the two above. It now touches the status at all: the value stays
@@ -118,12 +129,12 @@ remote operator an agent is free when it is mid-task. The repo's existing rules
 already pick that way twice ("a failure reports `unknown`, never `idle`"; "an
 unknown state becomes `Busy`, not `Idle`").
 
-The pane mapping went with it: an accepted `Interrupt` reports `unknown` rather
+The pane mapping went with it: an accepted `StopWaiting` reports `unknown` rather
 than `idle`, for the same reason the detach mapping does. It differs in being
 self-correcting — the controller survives an interrupt, so the next `Status` puts
 it right — but `idle` is not true at the moment it is said.
 
-`EchoController` in `kamiroh-adapter-memory` keeps `Interrupt → Idle`, and that
+`EchoController` in `kamiroh-adapter-memory` keeps stop-waiting → `Idle`, and that
 is not an inconsistency: it is a `HashMap` with no agent behind it, so its status
 is its whole model rather than a claim about something else.
 

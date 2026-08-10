@@ -31,7 +31,7 @@ Against the README's five aims:
 
 ## 2. The finding: the four verbs are the constraint now
 
-`ControlMessage` is `Prompt`, `Status`, `Interrupt`, `Shutdown`. That was ample
+`ControlMessage` was `Prompt`, `Status`, `Interrupt`, `Shutdown`. That was ample
 when an agent echoed. With a real coding agent behind it, two things a person
 obviously wants are unsayable.
 
@@ -72,6 +72,13 @@ the README's "lifecycle" aim is the least delivered: kamiroh attaches to agents
 
 **Both gaps are the same shape.** The vocabulary was designed before there was a
 real agent, and it is now the narrowest part of the system.
+
+> **Since resolved, by renaming rather than by reimplementing.** `Shutdown` is
+> `Detach` and `Interrupt` is `StopWaiting`; both now say what they do, and
+> neither wire byte moved. What could *not* be fixed is the underlying
+> limitation this section names — kamiroh still cannot stop an agent, because
+> Herdr offers no way to. The verbs no longer claim otherwise, which is the part
+> that was actually wrong.
 
 ---
 
@@ -116,7 +123,8 @@ substrate rather than by preference.** Read out of Herdr's own API schema:
   a stated non-goal in §4 — or `agent.send_keys`, which means per-kind
   keystrokes, exactly what agent-agnostic forbids. So "make it reach the agent"
   is not available without breaking a stated principle, and this is a fact about
-  the substrate rather than a taste. **The same applies to `Interrupt`.**
+  the substrate rather than a taste. **The same applied to `Interrupt`**, which
+  was renamed to `StopWaiting` for the same reason a slice later.
 
   The P2 run also raised the stakes: kamiroh reported `ok` at 17:22:01 and the
   agent wrote 297 lines at 17:27:32.
@@ -125,8 +133,9 @@ substrate rather than by preference.** Read out of Herdr's own API schema:
   what kamiroh does to agents. The wire byte did not move, so it is a rename and
   not a protocol change. The reporting path was the other half: this verb used to
   make a pane say `done`, which was the same false claim where an operator reads
-  it — now `unknown`. `Interrupt` keeps its name and gained an honest doc; the
-  controller survives it, so it misleads less. See LOOP.md, P1.
+  it — now `unknown`. `Interrupt` followed, to `StopWaiting`: same defect,
+  milder only because the controller survives it. Neither byte moved. See
+  LOOP.md, P1.
 
 - **Does reading need streaming? — the question changed shape.** The original
   answer was "probably not first, prove the need". The P2 run suggests the need

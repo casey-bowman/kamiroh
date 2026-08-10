@@ -113,11 +113,11 @@ where
 
 /// The command list, as shown by `/help`.
 const HELP: &str = "\
-  <anything>   send as a prompt
-  /status      ask what the agent is doing
-  /interrupt   stop waiting on the current prompt; the agent carries on
-  /detach      stop controlling the agent; it carries on, unwatched
-  /quit        leave this console; the node keeps running
+  <anything>     send as a prompt
+  /status        ask what the agent is doing
+  /stop-waiting  give up on the current prompt; the agent carries on
+  /detach        stop controlling the agent; it carries on, unwatched
+  /quit          leave this console; the node keeps running
 ";
 
 /// Turns a typed line into an [`Input`].
@@ -137,7 +137,10 @@ fn parse(line: &str) -> Input {
 
     match command {
         "status" => Input::Message(ControlMessage::Status),
-        "interrupt" => Input::Message(ControlMessage::Interrupt),
+        "stop-waiting" => Input::Message(ControlMessage::StopWaiting),
+        "interrupt" => Input::Retired(
+            "/interrupt is now /stop-waiting — it never reached the agent, only kamiroh's wait",
+        ),
         "detach" => Input::Message(ControlMessage::Detach),
         "shutdown" => Input::Retired(
             "/shutdown is now /detach — it never stopped the agent, only kamiroh's control of it",
@@ -307,13 +310,13 @@ mod tests {
     #[tokio::test]
     async fn slash_commands_map_to_the_other_control_verbs() {
         let link = FakeLink::echoing();
-        run("/status\n/interrupt\n/detach\n", Arc::clone(&link)).await;
+        run("/status\n/stop-waiting\n/detach\n", Arc::clone(&link)).await;
 
         assert_eq!(
             link.sent(),
             vec![
                 ControlMessage::Status,
-                ControlMessage::Interrupt,
+                ControlMessage::StopWaiting,
                 ControlMessage::Detach,
             ]
         );
@@ -428,5 +431,15 @@ mod tests {
         };
         assert!(note.contains("/detach"), "{note}");
         assert!(note.contains("never stopped the agent"), "{note}");
+    }
+
+    /// Same treatment for the other verb that was renamed for the same reason.
+    #[test]
+    fn the_old_interrupt_command_says_what_replaced_it_and_sends_nothing() {
+        let Input::Retired(note) = parse("/interrupt") else {
+            panic!("expected a retired command, got {:?}", parse("/interrupt"));
+        };
+        assert!(note.contains("/stop-waiting"), "{note}");
+        assert!(note.contains("never reached the agent"), "{note}");
     }
 }

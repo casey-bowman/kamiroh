@@ -266,11 +266,15 @@ and agent-agnosticism rule out respectively.
 
 The wire byte did not move (`4`), because this is a rename and not a protocol
 change — the codec round-trip tests passed untouched, which is the evidence.
-`Interrupt` keeps its name for now: it has the same gap, but the controller
-survives it, so `Status` still tells the truth about the agent afterwards.
+`Interrupt` went the same way, to `StopWaiting`. It had the same gap in a
+milder form — it says the agent abandons its work and only kamiroh's wait is
+abandoned — and it was left alone for one slice on the grounds that the
+controller survives it, so `Status` can still be asked. The name is now literal
+enough to need no such caveat, which is the standard the other three are held
+to. Its byte did not move either (`3`).
 
 **`Payload` and the agent-agnostic boundary.** kamiroh fixes the control *verbs*
-(`Prompt`, `Status`, `Interrupt`, `Detach`) and leaves the *content* opaque: a
+(`Prompt`, `Status`, `StopWaiting`, `Detach`) and leaves the *content* opaque: a
 `Payload` is bytes plus a content type, interpreted only by the agent behind the
 controller. `Payload::text` is a convenience for the common case, **not** a claim
 that agents are text-in/text-out. This is the deliberate reading of
@@ -509,7 +513,7 @@ Enforced by `kamiroh-adapter-herdr` and pinned by its tests:
 - **A failure reports `unknown`, never `idle`.** An unreachable peer says
   nothing about the agent behind it, and `idle` would be a guess presented as a
   fact.
-- **An accepted `Interrupt` reports `unknown`, not `idle`.** It means kamiroh
+- **An accepted `StopWaiting` reports `unknown`, not `idle`.** It means kamiroh
   stopped waiting, not that the agent stopped working, and `idle` in a sidebar
   invites someone to prompt an agent that is not ready. Self-correcting, unlike
   detaching — the controller survives, so the next `Status` reports the truth —
@@ -580,20 +584,20 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
   finishing cannot interleave with an interrupt — they are two messages in an
   order the mailbox already fixed.
 - **A prompt runs as its own task, and reports back through the mailbox.** If it
-  ran inline, the actor could not answer `Status` while working and `Interrupt`
+  ran inline, the actor could not answer `Status` while working and `StopWaiting`
   would have nothing to arrive at. The task never touches actor state directly.
 - **`Agent` is an adapter trait, not a port.** The ports crate describes
   kamiroh's boundaries; `Agent` describes how *this* adapter runs the thing
   behind one. Promoting it would make every future controller adapter adopt one
   notion of "an agent", which is the assumption kamiroh exists not to make.
-- **`Agent::run` must be cancel-safe.** Interrupt and detach abort the task, so
+- **`Agent::run` must be cancel-safe.** Stop-waiting and detach abort the task, so
   the future is dropped wherever it was suspended.
 - **One prompt at a time, refused rather than queued.** The mailbox would happily
   queue a second, but silently serialising them would make `Busy` a lie: the
   caller would wait with no way to tell queued from running.
 - **Nothing is awaited inside a handler without a bound.** While an inline await
   runs, nothing else in the mailbox moves — so an agent runtime that accepts a
-  connection and never answers would make `Interrupt` and `Detach` unreachable
+  connection and never answers would make `StopWaiting` and `Detach` unreachable
   and the agent unstoppable. `Status` is the only inline await, and it is capped
   at `STATUS_TIMEOUT`; a timeout leaves the cached status alone, exactly as an
   error does. Everything slow is spawned. M1 broke this rule while citing it,
@@ -604,9 +608,9 @@ Enforced by `kamiroh-adapter-kameo` and pinned by its tests:
   timing. Stopping is requested from another task: the mailbox is bounded, and an
   actor awaiting a send into its own mailbox from inside a handler cannot drain
   it to make room.
-- **Nobody waiting on a prompt is left hanging.** Interrupt, detach, and the
+- **Nobody waiting on a prompt is left hanging.** Stop-waiting, detach, and the
   actor's own `on_stop` each answer an outstanding prompt before dropping it.
-- **`Interrupt` does not touch the cached status.** It establishes that kamiroh
+- **`StopWaiting` does not touch the cached status.** It establishes that kamiroh
   is no longer waiting and nothing about the agent, which for a real runtime
   carries on working — only the *wait* was abandoned. It used to set `Idle`,
   claiming the agent was ready for work. Leaving the value alone means it stays

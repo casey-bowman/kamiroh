@@ -4,7 +4,7 @@
 //! which is what makes the state machine safe without a lock. A prompt runs as
 //! a separate task so the mailbox stays live while the agent works; that task
 //! reports back *through the mailbox* rather than touching state directly, so a
-//! completion and an interrupt racing each other are simply two messages in an
+//! completion and a `StopWaiting` racing each other are simply two messages in an
 //! order the mailbox already decided.
 
 use std::sync::Arc;
@@ -99,7 +99,7 @@ impl AgentActor {
         let task = tokio::spawn(async move {
             let outcome = agent.run(prompt).await; // Result; the actor decides what it means
             // Back through the mailbox, so this transition is ordered against
-            // Interrupt and Detach instead of racing them. A send failure
+            // StopWaiting and Detach instead of racing them. A send failure
             // means the actor is already gone, which is not ours to report.
             let _ = actor.tell(Finished(outcome)).await;
         });
@@ -174,7 +174,7 @@ impl Message<ControlMessage> for AgentActor {
                 // is exactly what this actor must not do without a limit: while
                 // it runs, nothing else in the mailbox moves, so an agent
                 // runtime that accepts a connection and never answers would
-                // make `Interrupt` and `Detach` unreachable — the agent could
+                // make `StopWaiting` and `Detach` unreachable — the agent could
                 // not even be stopped. `run` is spawned and may take minutes;
                 // this is asked and answered, or it is abandoned.
                 //
@@ -193,9 +193,9 @@ impl Message<ControlMessage> for AgentActor {
                 ctx.reply(Ok(ControlReply::Status(self.status)))
             }
 
-            ControlMessage::Interrupt => {
-                self.abandon("the prompt was interrupted");
-                // **The status is deliberately not touched.** Interrupting
+            ControlMessage::StopWaiting => {
+                self.abandon("kamiroh stopped waiting on the prompt");
+                // **The status is deliberately not touched.** Giving up the wait
                 // establishes one thing — kamiroh is no longer waiting — and
                 // nothing at all about the agent, which for a real runtime
                 // carries on working; only the wait was abandoned. Setting
@@ -241,7 +241,7 @@ impl Message<Finished> for AgentActor {
     type Reply = ();
 
     async fn handle(&mut self, Finished(result): Finished, _ctx: &mut Context<Self, Self::Reply>) {
-        // Absent when an interrupt got here first and already answered the
+        // Absent when a `StopWaiting` got here first and already answered the
         // caller. The abort races the agent's last step, so this is normal.
         let Some(running) = self.running.take() else {
             return;

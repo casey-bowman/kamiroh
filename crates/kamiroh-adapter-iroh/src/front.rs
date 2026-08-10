@@ -205,7 +205,7 @@ mod tests {
             (&real, ControlMessage::Status),
             (&fake, ControlMessage::Status),
             (&real, ControlMessage::Detach),
-            (&fake, ControlMessage::Interrupt),
+            (&fake, ControlMessage::StopWaiting),
             (&real, ControlMessage::Prompt(Payload::text("secret"))),
             (&fake, ControlMessage::Prompt(Payload::text("secret"))),
         ] {

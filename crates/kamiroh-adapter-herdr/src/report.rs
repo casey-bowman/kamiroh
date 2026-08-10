@@ -94,7 +94,7 @@ impl Link for ReportingLink {
 enum Kind {
     Prompt,
     Status,
-    Interrupt,
+    StopWaiting,
     Detach,
 }
 
@@ -103,7 +103,7 @@ impl Kind {
         match message {
             ControlMessage::Prompt(_) => Self::Prompt,
             ControlMessage::Status => Self::Status,
-            ControlMessage::Interrupt => Self::Interrupt,
+            ControlMessage::StopWaiting => Self::StopWaiting,
             ControlMessage::Detach => Self::Detach,
         }
     }
@@ -132,14 +132,14 @@ fn state_after(kind: Kind, result: &Result<ControlReply, LinkError>) -> PaneAgen
             // agent is doing, and `unknown` is what "I do not know" is called
             // here: the same rule §6d already applies to an unreachable peer.
             Kind::Detach => PaneAgentState::Unknown,
-            // **`Interrupt` is the same guess, and gets the same answer.** An
-            // accepted interrupt means kamiroh stopped waiting; the agent may
+            // **`StopWaiting` is the same guess, and gets the same answer.**
+            // Accepting it means kamiroh stopped waiting; the agent may
             // still be working, and `idle` in a sidebar invites someone to
             // prompt one that is not ready. Unlike detaching, this is
             // self-correcting — the controller survives, so the next `Status`
             // reports the truth — but "I do not know yet" is what is true at
             // the moment it is said.
-            Kind::Interrupt => PaneAgentState::Unknown,
+            Kind::StopWaiting => PaneAgentState::Unknown,
             Kind::Prompt | Kind::Status => PaneAgentState::Idle,
         },
     }
@@ -360,12 +360,12 @@ mod tests {
     }
 
     #[tokio::test]
-    /// An accepted interrupt means kamiroh stopped waiting, not that the agent
+    /// An accepted `StopWaiting` means kamiroh stopped waiting, not that the agent
     /// stopped working — so the pane must not say `idle` and invite someone to
     /// prompt it. Self-correcting, unlike detaching: the controller survives,
     /// so the next `Status` reports the truth.
-    async fn interrupt_reports_unknown_rather_than_claiming_the_agent_is_ready() {
-        let seen = reported(ControlMessage::Interrupt, Ok(ControlReply::Accepted)).await;
+    async fn stop_waiting_reports_unknown_rather_than_claiming_the_agent_is_ready() {
+        let seen = reported(ControlMessage::StopWaiting, Ok(ControlReply::Accepted)).await;
         assert_eq!(seen, vec![PaneAgentState::Unknown]);
     }
 
@@ -399,12 +399,12 @@ mod tests {
 
         // Nobody is draining `receiver`, so the channel fills immediately.
         for _ in 0..50 {
-            link.send(ControlMessage::Interrupt).await.unwrap();
+            link.send(ControlMessage::StopWaiting).await.unwrap();
         }
 
         drop(receiver);
         // Still usable afterwards: dropping updates is not a poisoned state.
-        assert!(link.send(ControlMessage::Interrupt).await.is_ok());
+        assert!(link.send(ControlMessage::StopWaiting).await.is_ok());
     }
 
     /// A serving node's pane must show work that arrives from a *peer*, which
@@ -500,7 +500,7 @@ mod tests {
         };
 
         let link = reporter.wrap_link(Arc::new(StubLink(Ok(ControlReply::Accepted))));
-        link.send(ControlMessage::Interrupt).await.unwrap();
+        link.send(ControlMessage::StopWaiting).await.unwrap();
         drop(link);
         drop(reporter);
         drop(sender);
@@ -510,8 +510,8 @@ mod tests {
             seen.push(state);
         }
         // The state is incidental here — what this pins is that the link's
-        // report reached the one shared channel. `Interrupt` maps to `Unknown`;
-        // `interrupt_reports_unknown_rather_than_claiming_the_agent_is_ready`
+        // report reached the one shared channel. `StopWaiting` maps to
+        // `Unknown`; `stop_waiting_reports_unknown_rather_than_claiming_the_agent_is_ready`
         // is where that mapping is the subject.
         assert_eq!(
             seen,
@@ -534,7 +534,7 @@ mod tests {
             Kind::Prompt
         );
         assert_eq!(Kind::of(&ControlMessage::Status), Kind::Status);
-        assert_eq!(Kind::of(&ControlMessage::Interrupt), Kind::Interrupt);
+        assert_eq!(Kind::of(&ControlMessage::StopWaiting), Kind::StopWaiting);
         assert_eq!(Kind::of(&ControlMessage::Detach), Kind::Detach);
     }
 }

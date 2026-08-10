@@ -134,7 +134,7 @@ mod tests {
 
     /// An agent that blocks until the test lets it finish, so a prompt can be
     /// observed mid-flight. Everything below that involves `Busy` or
-    /// `Interrupt` needs work that is genuinely in progress.
+    /// `StopWaiting` needs work that is genuinely in progress.
     struct GatedAgent {
         /// Notified once `run` has been entered.
         started: Arc<Notify>,
@@ -231,7 +231,7 @@ mod tests {
         );
 
         // And the mailbox still moves — this is the part that matters, since a
-        // wedged actor could not be interrupted or detached from.
+        // wedged actor could not be given up on or detached from.
         assert_eq!(
             controller
                 .dispatch(&agent(), ControlMessage::Detach)
@@ -299,13 +299,13 @@ mod tests {
     }
 
     #[tokio::test]
-    /// Interrupting abandons the wait and says nothing about the agent.
+    /// Giving up the wait says nothing about the agent.
     ///
     /// It used to answer `Idle`, which claimed the agent was ready for work.
     /// For a real runtime that is false — only kamiroh's wait was abandoned —
     /// and it is the direction §6e calls dangerous. The cached `Busy` stands
     /// until something can actually ask the agent.
-    async fn interrupt_abandons_the_running_prompt_without_claiming_the_agent_is_idle() {
+    async fn stop_waiting_abandons_the_running_prompt_without_claiming_the_agent_is_idle() {
         let (gate, gated) = Gate::new();
         let controller = Arc::new(KameoController::new().with_agent(agent(), gated));
 
@@ -318,7 +318,7 @@ mod tests {
 
         assert_eq!(
             controller
-                .dispatch(&agent(), ControlMessage::Interrupt)
+                .dispatch(&agent(), ControlMessage::StopWaiting)
                 .await
                 .unwrap(),
             ControlReply::Accepted
@@ -338,7 +338,7 @@ mod tests {
                 .await
                 .unwrap(),
             ControlReply::Status(AgentStatus::Busy),
-            "interrupting says nothing about the agent, so it must not claim idle"
+            "giving up the wait says nothing about the agent, so it must not claim idle"
         );
 
         // Releasing now proves the abort was real: a merely-detached task would

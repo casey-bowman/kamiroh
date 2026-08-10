@@ -79,7 +79,7 @@ impl AgentController for EchoController {
         match message {
             ControlMessage::Prompt(payload) => Ok(ControlReply::Output(payload)),
             ControlMessage::Status => Ok(ControlReply::Status(*status)),
-            ControlMessage::Interrupt => {
+            ControlMessage::StopWaiting => {
                 *status = AgentStatus::Idle;
                 Ok(ControlReply::Accepted)
             }
@@ -142,11 +142,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn interrupt_returns_the_agent_to_idle() {
+    async fn stop_waiting_returns_the_agent_to_idle() {
         let controller = EchoController::with_agents([agent()]);
         assert_eq!(
             controller
-                .dispatch(&agent(), ControlMessage::Interrupt)
+                .dispatch(&agent(), ControlMessage::StopWaiting)
                 .await
                 .unwrap(),
             ControlReply::Accepted
