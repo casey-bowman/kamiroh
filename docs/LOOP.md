@@ -61,6 +61,34 @@ with no agent runtime, and for tests.
 
 ## Done
 
+**The README now says what the verbs say**
+
+Phase 3's pre-publish checklist flagged it: the README promised *"start and
+manage long-running agents"*, and kamiroh does neither. It attaches to an agent
+Herdr started, and cannot stop one.
+
+**The fix was not only rewording aim 1, it was moving it out of the aims.** As an
+unmet aim under a status line reading "not all of the aims above exist yet",
+starting agents looked like unfinished work. It is a **stated non-goal** — the
+one place kamiroh could grow that would make it a worse Herdr — so it now sits in
+*Non-goals* with the reason, next to the fact that no way to stop an agent exists
+that does not mean managing panes or sending per-kind keystrokes.
+
+The rest followed from the same standard the verbs were held to:
+
+- Aim 2 lists what a caller can actually say, in the verbs' own words.
+- The Herdr bullet no longer offers "start/attach/monitor"; a pane is a terminal
+  you type at, and starting and supervising are Herdr's.
+- The status section separates *built* from *unproven* from *never*. Aims 1, 2, 4
+  and 5 are built and exercised against real processes; aim 3 carries the one
+  claim that has never been demonstrated — NAT traversal, which is the headline
+  home ↔ cafe case — and points at open decision 2. And it says plainly that a
+  non-goal is not a thing arriving later.
+
+Worth noting the shape, because it is the sixth of these: the code was right and
+the description promised more, in the direction a reader would act on. The
+difference here is that the reader is a stranger rather than an operator.
+
 **P1 (third slice) — `AwaitSettled`, the verb for "tell me when it needs me"**
 
 P2 measured what a coding agent's work actually looks like: long stretches of

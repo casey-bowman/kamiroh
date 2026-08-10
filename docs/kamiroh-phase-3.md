@@ -21,7 +21,7 @@ Against the README's five aims:
 
 | aim | state |
 |---|---|
-| Actor API | ✅ four verbs, one controller actor per agent |
+| Actor API | ✅ five verbs, one controller actor per agent |
 | Reachability | ✅ allowlisted, by endpoint id — NAT traversal unproven |
 | Agent-agnostic | ✅ opaque payloads, never parsed, never logged |
 | Peers | ✅ no central gateway; relays are opt-in and documented |
@@ -259,9 +259,11 @@ too late:**
    the pinned tag. Publishing from a fork whose logo commit has not been merged
    would ship a README with a broken image.
 
-3. **The README's lifecycle claim.** It promises starting and managing agents;
-   kamiroh attaches and cannot stop one (§2.2). Fix in P1, or reword before
-   strangers rely on it.
+3. ~~**The README's lifecycle claim.**~~ **Done.** It promised starting and
+   managing agents. Reworded to attach-and-drive, with starting and stopping
+   moved to *Non-goals* — because they are not unfinished work, and a status
+   line saying "not all aims exist yet" implied they were coming. The status
+   section now also names the NAT gap as the one claim to know about.
 
 ---
 
