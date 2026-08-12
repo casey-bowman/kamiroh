@@ -1,0 +1,163 @@
+# kamiroh — Architecture (Spike 1)
+
+**Status:** Accepted (spike scope)
+**Date:** August 12, 2026
+**Deciders:** Casey Bowman
+
+This document records the architecture for the second architectural spike of kamiroh
+(the `kamiroh-workshop-1` fork). It is designed from scratch, independent of spike 0.
+
+## Intent
+
+kamiroh combines actors at each end of an internet conversation. Actors are implemented
+with [Kameo]; conversations travel over [Iroh]. Where an AI agent participates, one actor
+is dedicated to that agent as its communications proxy — everything the agent says or
+hears in this system flows through its actor. A conversation may run agent↔agent,
+agent↔app, or app↔app; it may be a single request or a long-lived exchange; and either
+end may be an application embedding part of kamiroh as a library.
+
+[Kameo]: https://crates.io/crates/kameo
+[Iroh]: https://crates.io/crates/iroh
+
+## Shape
+
+A **modular monolith**: one deployable unit, organized as a Cargo workspace whose crate
+boundaries enforce the **ports-and-adapters** (hexagonal) structure. Dependencies point
+inward only; the domain compiles with no knowledge of Kameo, Iroh, or serialization
+formats.
+
+## Domain model
+
+The domain crate holds:
+
+- **Endpoint** — an Iroh endpoint identity (a public key). The unit of transport-proven
+  identity.
+- **Hex** — hex-string value objects for keys and identifiers.
+- **Secret** — secret-key material backing an endpoint, handled as a domain value with
+  care taken not to leak it through `Debug`/logs.
+- **ActorName** — a name unique *within* an endpoint.
+- **Address** — the pair (Endpoint, ActorName). How one actor designates another.
+- **Actor** — the domain concept of a named communicating party at an endpoint
+  (distinct from Kameo's actor type, which implements it in the runtime adapter).
+- **Allowlist** — per-actor inbound policy; see Trust model.
+- **Conversation** — an ongoing exchange between two actors, long- or short-lived.
+- **Vocabulary** (module) — the constrained set of message kinds actors may exchange.
+  Agnostic to the kind of agent (or non-agent) behind either end.
+- **Protocol** — a named, legal sequence of vocabulary messages between two parties,
+  each party opaque (agent or embedding app, one side or both).
+
+## Trust model
+
+The two halves of an Address carry different kinds of trust:
+
+- An **Endpoint** is a public key. Iroh proves, cryptographically, which endpoint a
+  connection comes from.
+- An **ActorName** is *claimed* by the remote runtime, not proven. Names are addressing,
+  not authentication.
+
+Consequently the **allowlist holds endpoints only**: admitting an endpoint means
+trusting that endpoint's runtime, including its honesty about which of its actors is
+speaking. Allowlist semantics:
+
+- **Deny by default** — an actor with an empty allowlist receives nothing.
+- **Checked per delivery**, not only at conversation-open, so a long-lived connection
+  cannot outlive a revocation.
+
+## Vocabulary v0
+
+A closed, compile-time set (Rust enums) shared by both ends. Wire encoding is an
+adapter concern, not a domain one.
+
+- **Request** — payload addressed to the party behind an actor.
+- **Ack** — delivery acknowledgment from the remote *actor*: "the request reached the
+  agent's dedicated actor and was handed over." Deliberately distinct from any future
+  `Response` (the party's actual answer), so response semantics can arrive later
+  without remodeling.
+
+Protocols in v0:
+
+- **request-ack** — the first and simplest protocol: one Request, one Ack.
+- **harness** — a minimal lifecycle/test protocol: spawn a named actor (backed by a
+  trivial echo-style agent), stop it, ping it. It exists so integration tests can
+  orchestrate both ends of a real Iroh conversation using the system's own machinery —
+  and it doubles as proof that the protocol abstraction generalizes beyond
+  request-ack. Admitting an endpoint to `harness` is a privileged grant; the full
+  agent-control vocabulary is deliberately deferred.
+
+## Hexagon
+
+**Core (inside):**
+
+- `kamiroh-domain` — the model above; pure, sync, dependency-light.
+- `kamiroh-app` — application services: conversation lifecycle, routing inbound
+  deliveries to the right actor, allowlist enforcement, protocol state. Defines the
+  ports as traits.
+
+**Ports:**
+
+- *Driving* — the embedding/agent-facing API: hand a Request to your dedicated actor,
+  be handed inbound messages. This is the surface an app-as-library or an agent
+  harness consumes.
+- *Driven* — `Transport`: open/accept conversations to an Address, send/receive
+  vocabulary messages. Defined by the core, implemented by adapters.
+
+**Adapters (outside):**
+
+- `kamiroh-transport-iroh` — implements `Transport` on Iroh connections; owns
+  endpoint setup, connection lifetimes (short- or long-lived), and the wire codec.
+- `kamiroh-runtime-kameo` — animates domain Actors as Kameo actors: mailboxes,
+  supervision, the dedicated-actor-per-agent pattern.
+- Agents themselves live **outside** the hexagon, on the driving side, behind their
+  dedicated actors.
+
+## Workspace layout
+
+```
+kamiroh/                      # workspace root; root crate `kamiroh` is the facade
+├── Cargo.toml                # [workspace] + the facade package
+├── src/                      # facade: re-exports, wiring, prelude for embedders
+└── crates/
+    ├── kamiroh-domain/
+    ├── kamiroh-app/
+    ├── kamiroh-transport-iroh/
+    └── kamiroh-runtime-kameo/
+```
+
+The root `kamiroh` crate keeps the published name and crates.io metadata, and is what
+embedding applications depend on.
+
+## Testing strategy
+
+- Domain and application logic: unit tests, no I/O.
+- Integration: two real Iroh endpoints in one test process, orchestrated over the
+  `harness` protocol — spawn an echo actor on the far side, run request-ack through
+  it, stop it, assert allowlist denials for unadmitted endpoints.
+
+## Decision log
+
+1. **Modular monolith, Cargo workspace, ports-and-adapters.** One unit to build and
+   reason about at spike scale; crate boundaries make the hexagon compiler-enforced
+   rather than conventional.
+2. **Allowlist checks endpoints only.** Names are unauthenticated claims; a policy
+   keyed on (endpoint, name) would imply a guarantee the transport cannot provide.
+3. **Deny by default; enforce per delivery.** Empty list means silence; revocation
+   takes effect on live connections.
+4. **Ack ≠ Response.** v0 confirms delivery to the dedicated actor only. Response
+   semantics (correlation, timeouts, partials, reconnect-after-answer) are expected
+   to be subtly complicated and are deferred as their own design step — last.
+5. **Vocabulary v0 is closed.** Both ends compile against the same enums; versioning
+   and cross-build evolution deferred until a second consumer exists.
+6. **Minimal harness protocol now; agent control later.** Just enough lifecycle
+   (spawn/stop/ping) to let tests drive both ends; the general "control a remote
+   agent" vocabulary waits for a real security design.
+7. **Kameo and Iroh are adapters.** The domain speaks of Actors and Conversations;
+   the crates that realize them are replaceable at the edges.
+
+## Deferred
+
+- Response semantics (the subtle part, saved for last — see decision 4).
+- Agent-control vocabulary beyond the test harness.
+- Discovery: how initiators learn Addresses (static configuration for the spike).
+- Name authentication within an endpoint, if it is ever wanted.
+- Vocabulary versioning across differing builds.
+- Wire format selection (serde-compatible; chosen inside the transport adapter).
