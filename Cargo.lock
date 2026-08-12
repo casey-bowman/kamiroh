@@ -5,3 +5,54 @@ version = 4
 [[package]]
 name = "kamiroh"
 version = "0.1.0"
+dependencies = [
+ "kamiroh-adapter-iroh",
+ "kamiroh-adapter-kameo",
+ "kamiroh-adapter-memory",
+ "kamiroh-app",
+ "kamiroh-domain",
+ "kamiroh-ports",
+]
+
+[[package]]
+name = "kamiroh-adapter-iroh"
+version = "0.1.0"
+dependencies = [
+ "kamiroh-domain",
+ "kamiroh-ports",
+]
+
+[[package]]
+name = "kamiroh-adapter-kameo"
+version = "0.1.0"
+dependencies = [
+ "kamiroh-domain",
+ "kamiroh-ports",
+]
+
+[[package]]
+name = "kamiroh-adapter-memory"
+version = "0.1.0"
+dependencies = [
+ "kamiroh-domain",
+ "kamiroh-ports",
+]
+
+[[package]]
+name = "kamiroh-app"
+version = "0.1.0"
+dependencies = [
+ "kamiroh-domain",
+ "kamiroh-ports",
+]
+
+[[package]]
+name = "kamiroh-domain"
+version = "0.1.0"
+
+[[package]]
+name = "kamiroh-ports"
+version = "0.1.0"
+dependencies = [
+ "kamiroh-domain",
+]

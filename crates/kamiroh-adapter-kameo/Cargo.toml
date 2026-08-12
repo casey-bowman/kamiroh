@@ -1,0 +1,11 @@
+[package]
+name = "kamiroh-adapter-kameo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kamiroh runtime adapter: domain actors animated as Kameo actors"
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true

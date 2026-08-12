@@ -1,0 +1,11 @@
+[package]
+name = "kamiroh-adapter-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kamiroh in-process transport adapter for tests"
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true

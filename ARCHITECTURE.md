@@ -90,10 +90,9 @@ Protocols in v0:
 
 - `kamiroh-domain` — the model above; pure, sync, dependency-light.
 - `kamiroh-app` — application services: conversation lifecycle, routing inbound
-  deliveries to the right actor, allowlist enforcement, protocol state. Defines the
-  ports as traits.
+  deliveries to the right actor, allowlist enforcement, protocol state.
 
-**Ports:**
+**Ports (`kamiroh-ports`, their own crate):**
 
 - *Driving* — the embedding/agent-facing API: hand a Request to your dedicated actor,
   be handed inbound messages. This is the surface an app-as-library or an agent
@@ -101,12 +100,18 @@ Protocols in v0:
 - *Driven* — `Transport`: open/accept conversations to an Address, send/receive
   vocabulary messages. Defined by the core, implemented by adapters.
 
-**Adapters (outside):**
+Putting the port traits in a dedicated crate means adapters depend on
+`kamiroh-domain` + `kamiroh-ports` only — never on the application layer — so the
+hexagon's dependency arrows are enforced by the compiler, not convention.
 
-- `kamiroh-transport-iroh` — implements `Transport` on Iroh connections; owns
+**Adapters (outside, named `kamiroh-adapter-*`):**
+
+- `kamiroh-adapter-iroh` — implements `Transport` on Iroh connections; owns
   endpoint setup, connection lifetimes (short- or long-lived), and the wire codec.
-- `kamiroh-runtime-kameo` — animates domain Actors as Kameo actors: mailboxes,
+- `kamiroh-adapter-kameo` — animates domain Actors as Kameo actors: mailboxes,
   supervision, the dedicated-actor-per-agent pattern.
+- `kamiroh-adapter-memory` — an in-process `Transport` for tests: exercises the
+  core with no network involved.
 - Agents themselves live **outside** the hexagon, on the driving side, behind their
   dedicated actors.
 
@@ -118,9 +123,11 @@ kamiroh/                      # workspace root; root crate `kamiroh` is the faca
 ├── src/                      # facade: re-exports, wiring, prelude for embedders
 └── crates/
     ├── kamiroh-domain/
+    ├── kamiroh-ports/
     ├── kamiroh-app/
-    ├── kamiroh-transport-iroh/
-    └── kamiroh-runtime-kameo/
+    ├── kamiroh-adapter-iroh/
+    ├── kamiroh-adapter-kameo/
+    └── kamiroh-adapter-memory/
 ```
 
 The root `kamiroh` crate keeps the published name and crates.io metadata, and is what
@@ -152,6 +159,11 @@ embedding applications depend on.
    agent" vocabulary waits for a real security design.
 7. **Kameo and Iroh are adapters.** The domain speaks of Actors and Conversations;
    the crates that realize them are replaceable at the edges.
+8. **Ports get their own crate; adapters are named `kamiroh-adapter-*`.** A layout
+   convention carried over from spike 0 at Casey's direction (structure only — no
+   other spike-0 design is imported). It lets adapters compile against domain +
+   ports without seeing the application layer, and makes the adapter roster legible
+   at a glance.
 
 ## Deferred
 

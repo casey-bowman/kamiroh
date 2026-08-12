@@ -1,0 +1,11 @@
+[package]
+name = "kamiroh-app"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kamiroh application layer: routing, allowlist enforcement, protocol state"
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
