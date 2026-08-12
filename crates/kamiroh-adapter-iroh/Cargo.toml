@@ -1,0 +1,11 @@
+[package]
+name = "kamiroh-adapter-iroh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kamiroh transport adapter: conversations over Iroh connections"
+
+[dependencies]
+kamiroh-domain.workspace = true
+kamiroh-ports.workspace = true
