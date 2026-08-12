@@ -8,39 +8,28 @@ Peer actors, addressable by name and endpoint, that message each other—-locall
 
 > **Status: early / WIP** — API and behavior may change.
 
-## What it aims to be
+## Aims
 
-kamiroh is meant to be a peer-oriented control layer for long-running agents. The aim is to combine:
+kamiroh is for putting two parties in conversation across the internet without a server
+in between. Each side of a conversation is an **actor** — a named party living at an
+[Iroh](https://www.iroh.computer/) endpoint. One endpoint can host many actors, each
+with its own unique name, and any actor can open a conversation with another by naming
+its endpoint and actor name.
 
-1. **Lifecycle** — start and manage long-running agents on a home-office node via Herdr locally, or from a client
-2. **Actor API** — Kameo-style actors as the control surface (prompt, status, interrupt, and similar messages)
-3. **Reachability** — Iroh connections accepted only from **allowlisted** endpoints (for example home ↔ cafe, behind NAT)
-4. **Agent-agnostic control** — no assumption about what each agent does; coding, testing, delegated app control, or anything else stays outside kamiroh
-5. **Peers** — agent control is peer-to-peer (no central control gateway)'. Iroh relays may still assist with NAT traversal; they do not command agents.
+Where an AI agent takes part, one actor is dedicated to that agent as its
+communications proxy: everything the agent sends or receives flows through its actor.
+But agents are optional — either end of a conversation can just as well be an
+application embedding kamiroh as a library. Conversations may be one quick
+request-and-acknowledgment or a long-lived back-and-forth, following small, defined
+**protocols** built from a constrained, agent-agnostic vocabulary.
 
+Security is allowlist-based and deny-by-default: an actor receives messages only from
+endpoints it has explicitly admitted, and an empty allowlist means silence.
 
-**Control model:** each agent is driven by one long-lived controller actor. Multiple fronts can talk to that same actor:
-
-- **Iroh** — remote peers (allowlisted `EndpointId` + actor name)
-- **Herdr** (optional) — local panes for start/attach/monitor, and pane input that the process bridges into the same actor
-
-Herdr is optional local UX and lifecycle aid; it is not required.
-
-Adjacent tools cover pieces of this (P2P transport, agent chat, remote shells, messaging gateways). kamiroh aims at this specific combination.
-
-## Addressing model
-
-- **Local:** actor name
-- **Remote:** `EndpointId` + actor name
-- **Trust:** endpoint allowlist on accept; key custody for each node’s Iroh secret
-- **Same actor, multiple fronts:** Herdr input and Iroh messages can both target the controller for a given agent
-
-## Non-goals 
-
-- Replacing Herdr, Claude Code, OpenCode, or other harnesses
-- Defining what agents do inside their own apps
-- A hosted multi-tenant cloud control plane
-- Automatic trust of arbitrary public endpoints
+Under the hood, kamiroh is a modular monolith in the ports-and-adapters style — a Rust
+workspace whose core knows nothing about the network or the actor runtime, with
+[Kameo](https://crates.io/crates/kameo) animating the actors and Iroh carrying the
+conversations. See [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture.
 
 ## Status
 
