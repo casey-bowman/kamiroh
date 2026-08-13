@@ -1,0 +1,16 @@
+[package]
+name = "kamiroh-domain"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kamiroh domain core: addressing, secrets, allowlist, vocabulary, protocols"
+
+[dependencies]
+# Optional, feature-gated: wire adapters enable this to serialize the
+# vocabulary (ARCHITECTURE.md, decision 18). The domain stays dependency-free
+# by default.
+serde = { version = "1", features = ["derive"], optional = true }
+
+[features]
+serde = ["dep:serde"]
