@@ -1,0 +1,10 @@
+[package]
+name = "kamiroh-ports"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "kamiroh ports: traits defined by the core, implemented by adapters or consumed by embedders"
+
+[dependencies]
+kamiroh-domain.workspace = true
