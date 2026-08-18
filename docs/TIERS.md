@@ -99,12 +99,16 @@ explicitly:
   configuration, dependencies — an implementation-spike branch in the
   active workshop, or a fresh workshop org for architectural work. No
   exceptions for "small" changes; small is how spike discipline erodes.
-- **Records and documentation of graduated work may land on main
-  directly**: validation briefs, process guides, README wording. These
-  document what main already contains rather than changing what it does.
-  They still arrive with the usual discipline — a short-lived, named,
-  reviewed branch, merged by fast-forward — just without the tier hops,
-  which would add nothing since there is no experiment to contain.
+- **Records and planning documents may land on main directly**:
+  validation briefs, process guides, roadmaps, README wording. What
+  qualifies them is not that they describe the past but that they contain
+  no experiment — they change no behavior, so there is nothing for the
+  tier hops to contain. They still arrive with the usual discipline — a
+  short-lived, named, reviewed branch, merged by fast-forward.
+
+This also covers the case the tier flow cannot: between spikes there is no
+active workshop to route through, so for anything written in that gap the
+direct lane is the only route there is.
 
 When in doubt, it rides a spike. The direct lane is for ink, not
 machinery.
