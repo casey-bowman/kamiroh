@@ -1,8 +1,10 @@
 # How kamiroh is built
 
-*A human-facing companion to the operational notes in `TIERS.md` (kept
-outside this repo) — for future developers curious about, or wanting to
-borrow, the workflow behind this project. Written August 2026, mid-spike-1.*
+*A human-facing companion to the operational notes in
+[TIERS.md](TIERS.md), and to the argument for them in
+[WHY-TIERS.md](WHY-TIERS.md) — for future developers curious about, or
+wanting to borrow, the workflow behind this project. Written August 2026,
+mid-spike-1.*
 
 kamiroh is developed by a small ensemble: one human (Casey) making the
 decisions and holding the keys, and two named AI sessions doing the drafting,

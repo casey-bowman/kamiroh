@@ -6,7 +6,9 @@ their shared history clean. Written after the process carried its first
 spike (spike-1) from empty workshop to canonical main, so everything
 here is practiced, not aspirational. For how work happens day-to-day
 inside a workshop (the human/AI ensemble, branch namespaces,
-verification habits), see [WORKFLOW.md](WORKFLOW.md).*
+verification habits), see [WORKFLOW.md](WORKFLOW.md); for why this shape is
+worth its ceremony, read from the reviewer's seat, see
+[WHY-TIERS.md](WHY-TIERS.md).*
 
 ## The shape
 
