@@ -132,44 +132,71 @@ Because the tiers are permanent forks, GitHub's ahead/behind counters
 need interpretation, not alarm. The one that most needs explaining is
 the graduated workshop, so here is the real case.
 
-**Worked example: workshop-1 shows "29 ahead, 3 behind" main — forever —
-and that is the process working, not drift.** The two numbers are the
-two halves of the content boundary:
+**Worked example: workshop-1 shows "29 ahead, 6 behind" main — and that
+is the process working, not drift.** The two numbers are the two halves
+of the content boundary, and they age differently: **the ahead count is
+frozen; the behind count grows by design.**
 
 - The **29 ahead** are the spike's actual development history — the
   scaffold, the adapters, the vendoring era, the docs, the merges. This
   history *never* flows to main, on purpose: it carries the vendored-
   dependency blobs (~590 MB) that the content boundary exists to keep
   out of main. Main received the spike's *final tree* via the snapshot;
-  it will never receive these commits.
-- The **3 behind** are the graduation commits themselves — the snapshot,
-  staging's PR merge, and the graduation merge into main. These *never*
-  flow back, on purpose: the workshop went archival at graduation, and
-  nothing syncs into an archive.
+  it will never receive these commits. This number is genuinely
+  permanent: the workshop is archival, so nothing is ever added to it.
+- The **behind count began at 3** — the graduation commits themselves:
+  the snapshot, staging's PR merge, and the graduation merge into main.
+  These never flow back, because the workshop went archival at
+  graduation and nothing syncs into an archive. But it does not stay 3.
+  It gains one for **every record that lands on main through the direct
+  lane** described above: the Incus validation brief took it to 4, this
+  guide took it to 5, and the correction you are reading took it to 6.
+  Read a larger number than that as the same arithmetic continuing —
+  count the records added to main since graduation.
+
+Those numbers are a snapshot as of this commit (2026-08-17), not an
+invariant; the *rule* is what to remember. The mechanism is worth
+stating plainly, because this section originally got it wrong: it
+shipped claiming "3 behind — forever," and the very act of landing it
+made the number 5. A guide that documents a direct lane onto main has
+to count itself as traffic on that lane.
 
 The same story as a picture — one lineage, told twice:
 
 ```
- (shared seed 380bc98)
+ (fork point — merge base b9e8627)
       │
-      ├── a ── b ── c ── … ── z            workshop-1 master
-      │      the 29: real history,           (archival: frozen forever,
-      │      vendor era included,             tree IDENTICAL to the
-      │      never exported                   snapshot's tree)
+      ├── a ── b ── c ── … ── z                  workshop-1 master
+      │      the 29: real history,                 (archival: frozen forever,
+      │      vendor era included,                   tree IDENTICAL to the
+      │      never exported                         graduation merge's tree)
       │
-      └────── S ───── M₁ ───── M₂          main master
-           snapshot   staging   graduation
-           (tree of    PR merge  merge
-            z exactly)
-              └──────── the 3: never flow back ────────┘
+      └────── S ───── M₁ ───── M₂ ── d₁ ── d₂ ──…  main master
+           snapshot   staging   grad.  direct-lane records
+           (tree of    PR merge  merge  (docs only — the behind
+            z exactly)                   count grows out here)
+              └─────────── none of it flows back ───────────┘
 ```
 
 The commits differ; the *code* does not. The meaningful check is the
-tree, not the counter: `git diff workshop-1-master main-master` was
-empty at graduation and stays empty forever, because neither side's
-master moves again. A dev seeing "29 ahead, 3 behind" on workshop-1
-should read it as a tombstone inscription: *here lies spike-1's full
-history; its result lives on in main.*
+tree, not the counter — but it has to be taken against the right
+commit. Against the **graduation merge**, the trees are identical and
+permanently so, because both sides of that comparison are frozen:
+
+```sh
+git diff <workshop-1-master> 7fe985c    # empty, and empty forever
+```
+
+Against main's **tip** the diff is no longer empty, and should not be:
+it is exactly the direct-lane records added since graduation — growing,
+but always docs-only. That makes it a live diagnostic rather than a
+dead invariant. If a diff against main's tip ever shows something that
+is *not* a record — source, tests, build configuration — then something
+reached main without riding a spike, and that is worth investigating.
+
+A dev seeing "29 ahead, N behind" on workshop-1 should read it as a
+tombstone inscription: *here lies spike-1's full history; its result
+lives on in main.*
 
 The other counters read conventionally:
 
@@ -182,9 +209,11 @@ The other counters read conventionally:
 A tip that spares every future reader this section: put the explanation
 in the workshop repo's GitHub **About/description** field (browser edit,
 no commit, tree stays pristine) — e.g. *"Archival: spike-1 (actors over
-iroh), graduated to main 2026-08-13. The permanent ahead/behind split vs
-main is by design — see docs/TIERS.md in main."* It's the first thing a
-visitor sees, right next to the counter that prompted their question.
+iroh), graduated to main 2026-08-13. The permanent ahead count and
+slowly growing behind count vs main are by design — see docs/TIERS.md in
+main."* It's the first thing a visitor sees, right next to the counter
+that prompted their question. Note the wording carries no specific
+numbers, so it never goes stale.
 
 ## Practical notes from the first graduation
 
