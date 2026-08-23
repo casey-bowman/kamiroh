@@ -81,6 +81,15 @@ pub fn completes(opening: &Message, reply: &Message) -> bool {
 /// Both parties hold one; the machine is symmetric, distinguished only by
 /// which methods fire. Every legal exchange walks: `Idle` →
 /// (open) → alternating `AwaitingTheirTurn` / `OweThem` → (close) → `Idle`.
+///
+/// The machine also knows about death (decision 23): when the outside world
+/// reaches a failure verdict — a deadline elapsed, the peer vanished, the
+/// peer's endpoint revoked here — it calls [`TurnState::fail`], and the
+/// machine refuses every further turn of
+/// the dead exchange by itself. A dead exchange is unrepresentable to talk
+/// to; only a fresh `Open` (a new exchange — the *conversation* survives)
+/// leaves `Failed`. The machine never reads a clock: time stays outside,
+/// only verdicts come in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TurnState {
     /// No exchange under way.
@@ -90,6 +99,10 @@ pub enum TurnState {
     AwaitingTheirTurn { outstanding: RequestId },
     /// They spoke last; our turn. `outstanding` is the request we must answer.
     OweThem { outstanding: RequestId },
+    /// The exchange failed (deadline elapsed, peer vanished, peer revoked
+    /// here). Terminal for the exchange, not the conversation: a fresh
+    /// `Open` may follow.
+    Failed,
 }
 
 /// Where the exchange stands after a legal turn.
@@ -113,6 +126,8 @@ pub enum TurnError {
     NoExchange,
     /// An `Open` while a request is outstanding — it must be answered first.
     MustAnswerFirst,
+    /// The exchange has failed; only a fresh `Open` may follow.
+    ExchangeFailed,
 }
 
 impl fmt::Display for TurnError {
@@ -123,6 +138,7 @@ impl fmt::Display for TurnError {
             TurnError::WrongResponse => "response does not answer the outstanding request",
             TurnError::NoExchange => "no exchange is under way",
             TurnError::MustAnswerFirst => "an outstanding request must be answered first",
+            TurnError::ExchangeFailed => "the exchange has failed; only a fresh Open may follow",
         };
         f.write_str(s)
     }
@@ -131,9 +147,32 @@ impl fmt::Display for TurnError {
 impl std::error::Error for TurnError {}
 
 impl TurnState {
+    /// Apply a failure verdict from outside (a deadline elapsed, the peer
+    /// vanished, the peer's endpoint revoked here): the exchange, if one
+    /// is under way, is dead. Returns whether an exchange was actually
+    /// live to fail — failing from `Idle` is a no-op, and failing twice
+    /// changes nothing.
+    pub fn fail(&mut self) -> bool {
+        match self {
+            TurnState::AwaitingTheirTurn { .. } | TurnState::OweThem { .. } => {
+                *self = TurnState::Failed;
+                true
+            }
+            TurnState::Idle | TurnState::Failed => false,
+        }
+    }
+
     /// Validate and apply a turn we are about to send.
     pub fn on_outgoing(&mut self, turn: &Turn) -> Result<TurnProgress, TurnError> {
         match (*self, turn) {
+            (TurnState::Failed, Turn::Open { request }) => {
+                // A fresh exchange leaves the dead one behind (decision 23).
+                *self = TurnState::AwaitingTheirTurn {
+                    outstanding: request.id,
+                };
+                Ok(TurnProgress::Continuing)
+            }
+            (TurnState::Failed, _) => Err(TurnError::ExchangeFailed),
             (TurnState::Idle, Turn::Open { request }) => {
                 *self = TurnState::AwaitingTheirTurn {
                     outstanding: request.id,
@@ -165,6 +204,15 @@ impl TurnState {
     /// Validate and apply a turn arriving from the other side.
     pub fn on_incoming(&mut self, turn: &Turn) -> Result<TurnProgress, TurnError> {
         match (*self, turn) {
+            (TurnState::Failed, Turn::Open { request }) => {
+                // Their fresh exchange leaves the dead one behind; stragglers
+                // from the failed exchange remain refused below.
+                *self = TurnState::OweThem {
+                    outstanding: request.id,
+                };
+                Ok(TurnProgress::Continuing)
+            }
+            (TurnState::Failed, _) => Err(TurnError::ExchangeFailed),
             (TurnState::Idle, Turn::Open { request }) => {
                 *self = TurnState::OweThem {
                     outstanding: request.id,
@@ -321,6 +369,55 @@ mod tests {
             }),
             Err(TurnError::NoExchange)
         );
+    }
+
+    #[test]
+    fn a_failed_exchange_refuses_everything_but_a_fresh_open() {
+        use crate::vocabulary::{Request, RequestId, Response, Turn};
+        let open = Turn::Open {
+            request: Request {
+                id: RequestId([1; 16]),
+                body: vec![],
+            },
+        };
+        let close = Turn::Close {
+            response: Response {
+                id: RequestId([1; 16]),
+                body: vec![],
+            },
+        };
+
+        // Mid-exchange, a failure verdict arrives from outside.
+        let mut s = TurnState::default();
+        s.on_outgoing(&open).unwrap();
+        assert!(s.fail());
+        assert_eq!(s, TurnState::Failed);
+
+        // The peer's genuine (late) answer is refused — the exchange is dead.
+        assert_eq!(s.on_incoming(&close), Err(TurnError::ExchangeFailed));
+        // And we may not speak into the dead exchange either.
+        assert_eq!(s.on_outgoing(&close), Err(TurnError::ExchangeFailed));
+
+        // Failing twice, or with no exchange live, changes nothing.
+        assert!(!s.fail());
+        assert!(!TurnState::default().fail());
+
+        // A fresh Open — ours or theirs — starts a new exchange (the
+        // conversation survives the failure; decision 23).
+        let fresh = Turn::Open {
+            request: Request {
+                id: RequestId([2; 16]),
+                body: vec![],
+            },
+        };
+        let mut ours = TurnState::Failed;
+        assert_eq!(ours.on_outgoing(&fresh), Ok(TurnProgress::Continuing));
+        let mut theirs = TurnState::Failed;
+        assert_eq!(theirs.on_incoming(&fresh), Ok(TurnProgress::Continuing));
+
+        // The new exchange judges stragglers by its own rules: the old
+        // exchange's close now falls to an id mismatch.
+        assert_eq!(ours.on_incoming(&close), Err(TurnError::WrongResponse));
     }
 
     #[test]

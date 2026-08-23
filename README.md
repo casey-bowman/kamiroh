@@ -8,12 +8,13 @@ Peer actors, addressable by name and endpoint, that message each other—locally
 
 > **Status: architectural spike, working end to end** — API and behavior may
 > change, but the full stack runs today: real QUIC between real machines
-> across the real internet, no server in between and no path configuration.
+> across the real internet, no application server in between and no path
+> configuration.
 
 ## Aims
 
-kamiroh puts two parties in conversation across the internet without a server
-in between. Each side of a conversation is an **actor** — a named party living at an
+kamiroh puts two parties in conversation across the internet without an
+application server in between. Each side of a conversation is an **actor** — a named party living at an
 [Iroh](https://www.iroh.computer/) endpoint. One endpoint can host many actors, each
 with its own unique name, and any actor can open a conversation with another by naming
 its endpoint and actor name.
@@ -56,7 +57,9 @@ The `N0` profile is field-validated: a laptop on a phone hotspot and again on
 café wifi conversed with a machine behind multiple NAT layers, dialing by id
 only, and got a hole-punched **direct path** both times
 ([the brief](docs/briefs/2026-08-13-internet-check-brief.md)). The test suite —
-39 tests, from domain invariants through real-QUIC loopback conversations —
+80 tests as of the spike-2 external-review round, from domain invariants
+through real-QUIC
+loopback conversations —
 runs hermetically, with no network at all.
 
 ## Try it in five minutes, one machine
@@ -90,7 +93,9 @@ between containers, [docs/INCUS-CHECK.md](docs/INCUS-CHECK.md).
 The dependency arrows all point inward: `kamiroh-domain` (endpoints, names,
 allowlists, the message vocabulary, the turn-taking state machine — pure, no
 dependencies) and `kamiroh-ports` (the traits the core speaks through:
-`Transport`, `Inbox`, `Registry`, `Party`) know nothing of the outside.
+`Transport`, `Inbox`, `Registry`, `Party` — and, since spike 2, `Timer`,
+`DeathWatch`, and `Observer`: time, death, and observability are ports
+too) know nothing of the outside.
 `kamiroh-app` implements conversations, admission, and the harness against
 those ports. The three `kamiroh-adapter-*` crates — `memory`, `kameo`,
 `iroh` — each plug the same core into a different world. Cross-crate behavior
@@ -107,15 +112,27 @@ of every design decision with its reasoning. [docs/WORKFLOW.md](docs/WORKFLOW.md
 describes how this repo is actually developed — a human and two AI agents in
 named roles, with branch namespaces and verification habits.
 [docs/VENDORING.md](docs/VENDORING.md) explains the `vendor-snapshot` branch
-(never delete it). Runbooks live in `docs/`, results in `docs/briefs/`, and
-contested design moments keep their full deliberation in `docs/advisories/`.
+(never delete it). Runbooks live in `docs/`, results in `docs/briefs/`, contested design
+moments keep their full deliberation in `docs/advisories/`, and
+example-mapping meetings — where new behavior is designed, humans and
+agents together — are archived board-by-board in `docs/mappings/`.
 
 ## Status
 
 An architectural spike: the concepts above exist and are tested, but the API is
-young and will change. Not yet here: timeouts, disconnect handling mid-exchange,
-streaming, and the agent-control vocabulary — see the decision log for what's
-deliberately deferred.
+young and will change. Spike 2 has landed timeouts, disconnects, live
+allowlist mutation, and same-endpoint fan-out
+(decisions 22–29): every conversation surface takes finite, mandatory
+deadlines; a hung exchange fails loudly on both sides' own clocks; transports
+report peer death as positive evidence that fails live exchanges at once
+while the conversation survives — pinned over real QUIC; denials became
+locally observable; a running actor's allowlist can admit and revoke
+without a restart, a revocation failing live exchanges at once; and one
+send can open conversations with several actors at one endpoint. The wire
+speaks `kamiroh/1` (the frame layout changed for fan-out, and an
+incompatible wire change bumps the version). Not yet here: streaming and
+the agent-control vocabulary
+— see the decision log for what's deliberately deferred.
 
 ## License
 

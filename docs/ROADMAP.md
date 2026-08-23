@@ -18,21 +18,23 @@ applications — tests that kill containers, run unattended, and must fail
 fast and loudly. Candidate implementation spikes, in rough priority
 order:
 
-1. **Timeouts.** The protocol layer has none; the 15-second deadlines in
-   the check binary live in the example, not the library. A hung exchange
-   must become a loud failure.
-2. **Disconnect mid-exchange.** Currently undefined behavior, and
-   container-based tests kill endpoints as a matter of course. What a
-   conversation does when its peer vanishes needs an answer.
-3. **Dynamic allowlist mutation.** The domain supports `admit`/`revoke`
-   and enforcement is per-delivery — revocation *would* take effect on a
-   live connection — but the Kameo runtime fixes an actor's allowlist at
-   install time, so nothing can actually perform a revocation on a
-   running actor. The promise is kept but currently unreachable.
-4. **Deny observability.** Denied deliveries vanish silently — right for
-   security, awkward for a test that wants to *assert* a denial happened.
-   A tracing hook or counter, not a behavior change.
-5. **Fan-out, v1: same-endpoint only.** One send reaching several actors
+1. **Timeouts.** *Delivered (decisions 22–24).* The protocol layer had
+   none; now deadlines are finite, mandatory, and per-conversation, and a
+   hung exchange is a loud failure.
+2. **Disconnect mid-exchange.** *Delivered (decision 27).* A reported
+   death fails live exchanges at once; conversations survive; silence
+   stays the deadline's job.
+3. **Dynamic allowlist mutation.** *Delivered (decision 28).* The domain
+   always supported `admit`/`revoke` with per-delivery enforcement, but
+   nothing could reach a running actor's list — the promise was kept but
+   unreachable. Now both runtimes expose `admit`/`revoke` on running
+   actors (local API only; the wire form is deferred with the
+   operator-port design), and a revocation fails live exchanges at once.
+4. **Deny observability.** *Delivered (decision 25).* Denied deliveries
+   stay silent on the wire and are observable at home:
+   `Event::DeliveryDenied` through the observer.
+5. **Fan-out, v1: same-endpoint only.** *Delivered (decision 29).* One
+   send reaching several actors
    that all live on a single endpoint. The design observation that keeps
    this simple: colocation collapses partial failure — one connection,
    one delivery event, one ack covering the batch — and the load-bearing

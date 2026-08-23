@@ -23,12 +23,13 @@ use iroh::{EndpointAddr, TransportAddr};
 use tokio::time::timeout;
 
 use kamiroh_adapter_iroh::{IrohInbox, IrohNet, NetProfile};
-use kamiroh_adapter_kameo::KameoRuntime;
+use kamiroh_adapter_kameo::{KameoRuntime, TokioTimer};
 use kamiroh_app::inbound::{Inbound, process};
 use kamiroh_app::phone::Phone;
 use kamiroh_app::runtime::ActorKind;
 use kamiroh_domain::actor::{ActorName, Address};
 use kamiroh_domain::allowlist::Allowlist;
+use kamiroh_domain::deadline::Deadlines;
 use kamiroh_domain::endpoint::EndpointId;
 use kamiroh_domain::hex::Hex;
 use kamiroh_domain::protocol::TurnProgress;
@@ -137,9 +138,17 @@ async fn serve(net: IrohNet, allow_hex: &str) {
     let mut allowlist = Allowlist::empty();
     allowlist.admit(peer);
 
-    let runtime = KameoRuntime::new(net.endpoint_id().clone(), net.transport(), net.clone());
+    // The example's explicit choice of patience (deadlines are mandatory,
+    // decision 22): delivery acks within 15s, turns within 60s.
+    let patience = Deadlines::new(Duration::from_secs(15), Duration::from_secs(60));
+    let runtime = KameoRuntime::new(
+        net.endpoint_id().clone(),
+        net.transport(),
+        net.clone(),
+        patience,
+    );
     runtime
-        .install(name("harness"), allowlist, ActorKind::Harness)
+        .install(name("harness"), allowlist, patience, ActorKind::Harness)
         .expect("install harness");
     println!("READY");
     std::future::pending::<()>().await;
@@ -201,7 +210,14 @@ async fn check(net: IrohNet, peer_id_hex: &str, peer_ip: Option<&str>) {
 
     // -- 3. A turn exchange with it --------------------------------------
     let echo = Address::new(peer.clone(), name("echo-incus"));
-    let mut phone = Phone::converse(controller.clone(), echo, net.transport());
+    let patience = Deadlines::new(Duration::from_secs(15), Duration::from_secs(60));
+    let mut phone = Phone::converse(
+        controller.clone(),
+        echo,
+        net.transport(),
+        patience,
+        TokioTimer,
+    );
     let body = b"hello from the other container".to_vec();
     phone
         .open(Request {

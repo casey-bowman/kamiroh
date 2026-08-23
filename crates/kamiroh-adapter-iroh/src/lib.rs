@@ -14,45 +14,33 @@
 //!   explicitly via [`IrohNet::add_peer`] (matching "static configuration
 //!   for the spike").
 //! - **One frame per uni-stream** over a cached per-peer connection, one
-//!   reconnect retry on stale connections. ALPN `kamiroh/0`. Wire format:
+//!   reconnect retry on stale connections. ALPN `kamiroh/1`. Wire format:
 //!   length-implicit postcard (the stream is the frame boundary).
 //! - Allowlist enforcement stays where it lives: the app layer's per-delivery
 //!   admission. The adapter delivers to bound names and does nothing more.
 //!
-//! ## Version assumptions — read me on the first local build pass
+//! ## A historical note on the "assumption point" comments
 //!
-//! Written against `iroh = "0.35"`-era APIs **without compiling** (the cloud
-//! sandbox cannot reach crates.io). Points most likely to need adjustment,
-//! in probable order of drift (calibration: on the kameo round, 4 of 5
-//! guesses held; the entry-point call was the one that moved):
-//!
-//! 1. Endpoint construction: `Endpoint::builder().secret_key(..)
-//!    .alpns(vec![ALPN.to_vec()]).relay_mode(RelayMode::Disabled)
-//!    .bind().await` — builder method names and whether `bind` takes args.
-//! 2. Getting our dialable address: `endpoint.node_addr()` may be a watcher
-//!    (`.initialized().await`) rather than a direct getter; the type may be
-//!    `NodeAddr` or `EndpointAddr` depending on version.
-//! 3. `endpoint.connect(addr, ALPN).await` argument types (NodeAddr vs
-//!    NodeId-with-peer-book-inside-iroh).
-//! 4. Remote identity: `connection.remote_node_id()` (name/fallibility).
-//! 5. Stream API: `open_uni` / `accept_uni`, `write_all` + `finish` (+
-//!    whether `finish` is sync), `read_to_end(limit)`.
-//! 6. Accept loop: `endpoint.accept().await` yields an `Incoming` that is
-//!    itself awaited to a `Connection` (possibly via `.accept()?`).
-//! 7. Key types: `SecretKey::from_bytes(&[u8; 32])`, `NodeId::from_bytes`,
-//!    hex `Display`/`FromStr` for NodeId.
-//!
-//! The routing, framing, peer book, and trust structure are iroh-agnostic
-//! and should not need touching.
+//! This adapter was first drafted in spike 1 against `iroh = "0.35"`-era
+//! APIs **without compiling** (the cloud sandbox could not reach
+//! crates.io then, and blind-writing with assumption lists was the
+//! workflow — since retired, see `docs/WORKFLOW.md`). It has long since
+//! been compiled, tested, reviewed, and extended against the real
+//! dependency (`iroh 1.0` at spike 2's close, on ALPN `kamiroh/1`). The
+//! numbered "assumption point" markers below survive as archaeology:
+//! they record which guesses the first local build pass had to correct,
+//! and are no longer live uncertainty.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::task::Waker;
 
 // iroh 1.0 renamed NodeId -> EndpointId and NodeAddr -> EndpointAddr. Alias
 // them back to the adapter's names, which stay distinct from the domain's own
 // `EndpointId` and keep the routing/framing code below unchanged.
+use iroh::endpoint::ConnectionError;
 use iroh::endpoint::presets;
 use iroh::{
     Endpoint, EndpointAddr as NodeAddr, EndpointId as NodeId, RelayMode, SecretKey, Watcher,
@@ -63,11 +51,15 @@ use kamiroh_domain::actor::{ActorName, Address};
 use kamiroh_domain::endpoint::EndpointId;
 use kamiroh_domain::hex::Hex;
 use kamiroh_domain::secret::Secret;
-use kamiroh_domain::vocabulary::Message;
-use kamiroh_ports::{Delivery, Inbox, Registry, Transport};
+use kamiroh_domain::vocabulary::{Ack, Message, Request, Turn};
+use kamiroh_ports::{DeathWatch, Delivery, Inbox, Registry, Transport, batch_receipt_sender};
 
-/// The kamiroh ALPN: one protocol version on the wire.
-pub const ALPN: &[u8] = b"kamiroh/0";
+/// The kamiroh ALPN: one protocol version on the wire. Bumped to `/1`
+/// when decision 29 changed the frame layout (struct -> enum): an
+/// incompatible wire change bumps this number, so mismatched builds
+/// refuse each other loudly at the handshake instead of silently
+/// dropping frames until deadlines elapse.
+pub const ALPN: &[u8] = b"kamiroh/1";
 
 /// Cap on a single frame; a spike guard, not a protocol constant.
 const MAX_FRAME_BYTES: usize = 1024 * 1024;
@@ -75,10 +67,21 @@ const MAX_FRAME_BYTES: usize = 1024 * 1024;
 /// What crosses the wire. The origin *endpoint* deliberately does not:
 /// the receiver takes it from the connection's authenticated remote key.
 #[derive(serde::Serialize, serde::Deserialize)]
-struct Frame {
-    from_name: ActorName,
-    to_name: ActorName,
-    message: Message,
+enum Frame {
+    /// One message to one actor — the pairwise send.
+    Single {
+        from_name: ActorName,
+        to_name: ActorName,
+        message: Message,
+    },
+    /// One opening request to several actors at this endpoint (decision
+    /// 29): the receiver acks the batch once at arrival, then fans in to
+    /// each bound name — unbound names disclose nothing.
+    OpenMany {
+        from_name: ActorName,
+        to_names: Vec<ActorName>,
+        request: Request,
+    },
 }
 
 #[derive(Default)]
@@ -95,6 +98,73 @@ struct Shared {
     peers: Mutex<HashMap<EndpointId, NodeAddr>>,
     /// Cached connections per peer.
     connections: tokio::sync::Mutex<HashMap<EndpointId, iroh::endpoint::Connection>>,
+    /// Death-event queues, one per outstanding [`IrohDeathWatch`]
+    /// (decision 27).
+    death_watchers: Mutex<Vec<Arc<Mutex<DeathQueue>>>>,
+}
+
+#[derive(Debug, Default)]
+struct DeathQueue {
+    queue: VecDeque<EndpointId>,
+    waker: Option<Waker>,
+}
+
+/// Report `endpoint` dead to every outstanding watch.
+fn report_death(shared: &Shared, endpoint: EndpointId) {
+    let watchers: Vec<_> = shared
+        .death_watchers
+        .lock()
+        .expect("death watchers poisoned")
+        .clone();
+    for watcher in watchers {
+        let waker = {
+            let mut q = watcher.lock().expect("death queue poisoned");
+            q.queue.push_back(endpoint.clone());
+            q.waker.take()
+        };
+        if let Some(waker) = waker {
+            waker.wake();
+        }
+    }
+}
+
+/// Watch one connection's death (decision 27): when `closed()` resolves
+/// with anything but a close *we* initiated, the peer endpoint is reported
+/// dead and the stale cache entry evicted. A `LocallyClosed` is cache
+/// maintenance, not evidence — the peer is not dead because we hung up.
+fn watch_connection(
+    shared: Arc<Shared>,
+    connection: iroh::endpoint::Connection,
+    origin: EndpointId,
+) {
+    tokio::spawn(async move {
+        let reason = connection.closed().await;
+        // The suppression check and the report happen under one hold of the
+        // connections lock, so a reconnect cannot complete between them and
+        // let a stale report slip out (review nit, 2026-08-20; sound because
+        // report_death takes only the watcher locks and never awaits).
+        let mut connections = shared.connections.lock().await;
+        let superseded = match connections.get(&origin) {
+            // The cache still holds THIS connection: evict it, and the
+            // death is current.
+            Some(cached) if cached.stable_id() == connection.stable_id() => {
+                connections.remove(&origin);
+                false
+            }
+            // A NEWER connection to the same peer exists — a re-dial
+            // already succeeded, so the peer is demonstrably not dead.
+            // This report is stale (the reviewer's story-2 hazard 1: a
+            // death report racing the reconnect the glossary promises),
+            // and the transport is the one layer that can tell, because
+            // connection generations are visible here. Suppress it.
+            Some(_) => true,
+            None => false,
+        };
+        if !superseded && !matches!(reason, ConnectionError::LocallyClosed) {
+            report_death(&shared, origin);
+        }
+        drop(connections);
+    });
 }
 
 /// One kamiroh endpoint on the Iroh network: owns the iroh `Endpoint`, the
@@ -184,6 +254,7 @@ impl IrohNet {
             router: Mutex::new(Router::default()),
             peers: Mutex::new(HashMap::new()),
             connections: tokio::sync::Mutex::new(HashMap::new()),
+            death_watchers: Mutex::new(Vec::new()),
         });
 
         let accept_shared = Arc::clone(&shared);
@@ -249,6 +320,43 @@ impl IrohNet {
         id
     }
 
+    /// A [`DeathWatch`] onto the network (decision 27): reports peers whose
+    /// connections closed by *their* doing — application close, timeout,
+    /// reset — never closes this side initiated.
+    pub fn death_watch(&self) -> IrohDeathWatch {
+        let queue = Arc::new(Mutex::new(DeathQueue::default()));
+        self.shared
+            .death_watchers
+            .lock()
+            .expect("death watchers poisoned")
+            .push(Arc::clone(&queue));
+        IrohDeathWatch { queue }
+    }
+
+    /// Deliberately close the cached connection to `peer`, if any — cache
+    /// maintenance (a fresh dial replaces it on the next send), and a test
+    /// lever for the "a conversation spans connections" promise. This side
+    /// sees `LocallyClosed` (not a death); the *peer* sees an application
+    /// close, which is death evidence there and fails its live exchanges
+    /// with us — deliberate hang-ups are how endpoints say goodbye.
+    pub async fn close_connection(&self, peer: &EndpointId) -> bool {
+        let removed = self.shared.connections.lock().await.remove(peer);
+        match removed {
+            Some(connection) => {
+                connection.close(0u32.into(), b"kamiroh: connection closed by this side");
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Close this endpoint entirely: every peer's `closed()` fires (death
+    /// evidence on their side), and this net sends and receives nothing
+    /// more. The graceful goodbye a killed container never says.
+    pub async fn shutdown(&self) {
+        self.shared.endpoint.close().await;
+    }
+
     /// A [`Transport`] handle onto the network.
     pub fn transport(&self) -> IrohTransport {
         IrohTransport {
@@ -310,18 +418,47 @@ impl Transport for IrohTransport {
         if from.endpoint != self.shared.endpoint_id {
             return Err(IrohTransportError::NotOurEndpoint);
         }
-        let frame = Frame {
+        let frame = Frame::Single {
             from_name: from.name.clone(),
             to_name: to.name.clone(),
             message,
         };
-        let bytes =
-            postcard::to_stdvec(&frame).map_err(|e| IrohTransportError::Encode(e.to_string()))?;
+        self.send_encoded(&to.endpoint, &frame).await
+    }
 
+    async fn open_many(
+        &mut self,
+        from: &Address,
+        to_endpoint: &EndpointId,
+        to_names: &[ActorName],
+        request: Request,
+    ) -> Result<(), Self::Error> {
+        if from.endpoint != self.shared.endpoint_id {
+            return Err(IrohTransportError::NotOurEndpoint);
+        }
+        let frame = Frame::OpenMany {
+            from_name: from.name.clone(),
+            to_names: to_names.to_vec(),
+            request,
+        };
+        self.send_encoded(to_endpoint, &frame).await
+    }
+}
+
+impl IrohTransport {
+    /// Encode `frame` and send it with one stale-connection retry — the
+    /// shared tail of both [`Transport`] methods.
+    async fn send_encoded(
+        &self,
+        to_endpoint: &EndpointId,
+        frame: &Frame,
+    ) -> Result<(), IrohTransportError> {
+        let bytes =
+            postcard::to_stdvec(frame).map_err(|e| IrohTransportError::Encode(e.to_string()))?;
         // One retry: a cached connection may have gone stale.
         let mut last_err = None;
         for attempt in 0..2 {
-            let connection = self.connection_to(&to.endpoint, attempt > 0).await?;
+            let connection = self.connection_to(to_endpoint, attempt > 0).await?;
             match send_frame(&connection, &bytes).await {
                 Ok(()) => return Ok(()),
                 Err(e) => last_err = Some(e),
@@ -329,9 +466,7 @@ impl Transport for IrohTransport {
         }
         Err(last_err.expect("two attempts made"))
     }
-}
 
-impl IrohTransport {
     async fn connection_to(
         &self,
         peer: &EndpointId,
@@ -360,6 +495,8 @@ impl IrohTransport {
         // here, not at the accept loop — every connection gets a reader,
         // whichever side dialed it.
         spawn_reader(Arc::clone(&self.shared), connection.clone());
+        // And every connection gets a death watch (decision 27).
+        watch_connection(Arc::clone(&self.shared), connection.clone(), peer.clone());
         Ok(connection)
     }
 }
@@ -405,7 +542,8 @@ async fn accept_loop(shared: Arc<Shared>) {
                 .connections
                 .lock()
                 .await
-                .insert(origin, connection.clone());
+                .insert(origin.clone(), connection.clone());
+            watch_connection(Arc::clone(&shared), connection.clone(), origin);
             spawn_reader(shared, connection);
         });
     }
@@ -429,19 +567,84 @@ fn spawn_reader(shared: Arc<Shared>, connection: iroh::endpoint::Connection) {
             let Ok(frame) = postcard::from_bytes::<Frame>(&bytes) else {
                 continue; // malformed frame: drop
             };
-            let delivery = Delivery {
-                from: Address::new(origin.clone(), frame.from_name),
-                to: Address::new(shared.endpoint_id.clone(), frame.to_name),
-                message: frame.message,
-            };
-            let router = shared.router.lock().expect("router poisoned");
-            if let Some(tx) = router.bound.get(&delivery.to.name) {
-                // Unknown or closed bindings drop silently: an unbound
-                // name discloses nothing.
-                let _ = tx.send(delivery);
+            match frame {
+                Frame::Single {
+                    from_name,
+                    to_name,
+                    message,
+                } => {
+                    let delivery = Delivery {
+                        from: Address::new(origin.clone(), from_name),
+                        to: Address::new(shared.endpoint_id.clone(), to_name),
+                        message,
+                    };
+                    let router = shared.router.lock().expect("router poisoned");
+                    if let Some(tx) = router.bound.get(&delivery.to.name) {
+                        // Unknown or closed bindings drop silently: an unbound
+                        // name discloses nothing.
+                        let _ = tx.send(delivery);
+                    }
+                }
+                Frame::OpenMany {
+                    from_name,
+                    to_names,
+                    request,
+                } => {
+                    // The batch receipt goes back FIRST, at endpoint
+                    // arrival, before any name is consulted — and even if
+                    // every name below is unbound (decision 29): it
+                    // promises arrival, and the names were never part of
+                    // that promise. Best-effort over the same connection.
+                    let receipt = Frame::Single {
+                        from_name: batch_receipt_sender(&shared.endpoint_id).name,
+                        to_name: from_name.clone(),
+                        message: Message::Ack(Ack { id: request.id }),
+                    };
+                    if let Ok(receipt_bytes) = postcard::to_stdvec(&receipt) {
+                        let _ = send_frame(&connection, &receipt_bytes).await;
+                    }
+                    let from = Address::new(origin.clone(), from_name);
+                    let router = shared.router.lock().expect("router poisoned");
+                    for name in to_names {
+                        // Unbound names drop silently: an unbound name
+                        // discloses nothing (decision 29 — a per-name
+                        // error would be a roster oracle).
+                        if let Some(tx) = router.bound.get(&name) {
+                            let _ = tx.send(Delivery {
+                                from: from.clone(),
+                                to: Address::new(shared.endpoint_id.clone(), name.clone()),
+                                message: Message::Turn(Turn::Open {
+                                    request: request.clone(),
+                                }),
+                            });
+                        }
+                    }
+                }
             }
         }
     });
+}
+
+/// [`DeathWatch`] over [`IrohNet`]: yields peers whose connections died by
+/// the peer's doing, in the order the deaths were observed. Never closes.
+pub struct IrohDeathWatch {
+    queue: Arc<Mutex<DeathQueue>>,
+}
+
+impl DeathWatch for IrohDeathWatch {
+    async fn next_death(&mut self) -> Option<EndpointId> {
+        std::future::poll_fn(|cx| {
+            let mut q = self.queue.lock().expect("death queue poisoned");
+            match q.queue.pop_front() {
+                Some(endpoint) => std::task::Poll::Ready(Some(endpoint)),
+                None => {
+                    q.waker = Some(cx.waker().clone());
+                    std::task::Poll::Pending
+                }
+            }
+        })
+        .await
+    }
 }
 
 fn node_id_to_endpoint_id(id: NodeId) -> EndpointId {

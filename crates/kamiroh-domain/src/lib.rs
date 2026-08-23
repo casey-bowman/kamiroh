@@ -7,6 +7,7 @@
 
 pub mod actor;
 pub mod allowlist;
+pub mod deadline;
 pub mod endpoint;
 pub mod hex;
 pub mod protocol;

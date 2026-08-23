@@ -2,14 +2,17 @@
 //! the other, alternating strictly, with delivery acks arriving on handover
 //! and the exchange concluded by a response-only Close.
 
+use std::time::Duration;
+
 use kamiroh::adapter_memory::MemoryNet;
-use kamiroh::adapter_memory::testing::block_on;
+use kamiroh::adapter_memory::testing::{TestTimer, block_on};
 use kamiroh::app::inbound::{Inbound, process};
 use kamiroh::app::parties::CountdownParty;
 use kamiroh::app::phone::Phone;
 use kamiroh::app::runtime::LocalRuntime;
 use kamiroh::domain::actor::{ActorName, Address};
 use kamiroh::domain::allowlist::Allowlist;
+use kamiroh::domain::deadline::Deadlines;
 use kamiroh::domain::endpoint::EndpointId;
 use kamiroh::domain::hex::Hex;
 use kamiroh::domain::protocol::TurnProgress;
@@ -26,6 +29,10 @@ fn name(s: &str) -> ActorName {
 
 fn address(e: &str, n: &str) -> Address {
     Address::new(endpoint(e), name(n))
+}
+
+fn patience() -> Deadlines {
+    Deadlines::new(Duration::from_secs(5), Duration::from_secs(60))
 }
 
 fn request(n: u8) -> Request {
@@ -48,19 +55,32 @@ fn a_multi_round_exchange_with_acks_on_every_handover() {
 
         // Far side: the toy runtime hosting a CountdownParty(2) — it will
         // pose two requests of its own before closing.
-        let mut runtime = LocalRuntime::new(endpoint("bb"), net.transport(), net.clone());
+        let mut runtime = LocalRuntime::new(
+            endpoint("bb"),
+            net.transport(),
+            net.clone(),
+            TestTimer::new(),
+            patience(),
+        );
         let mut party_list = Allowlist::empty();
         party_list.admit(endpoint("aa"));
         runtime
             .install_party(
                 name("counter"),
                 party_list,
+                patience(),
                 Box::new(CountdownParty::new(2)),
             )
             .unwrap();
         let counter = address("bb", "counter");
 
-        let mut phone = Phone::converse(app.clone(), counter.clone(), net.transport());
+        let mut phone = Phone::converse(
+            app.clone(),
+            counter.clone(),
+            net.transport(),
+            patience(),
+            TestTimer::new(),
+        );
 
         // Open the exchange.
         phone.open(request(1)).await.unwrap();
@@ -134,7 +154,7 @@ fn the_phone_refuses_out_of_turn_sends() {
         // Register the peer so sends do not fail at the transport.
         let _peer_inbox = net.register(peer.clone()).unwrap();
 
-        let mut phone = Phone::converse(app, peer, net.transport());
+        let mut phone = Phone::converse(app, peer, net.transport(), patience(), TestTimer::new());
         phone.open(request(1)).await.unwrap();
         // We just spoke; a second turn before their reply is refused locally.
         let err = phone.open(request(2)).await.unwrap_err();
@@ -147,6 +167,8 @@ fn the_phone_refuses_out_of_turn_sends() {
             address("aa", "app2"),
             address("bb", "counter"),
             net.transport(),
+            patience(),
+            TestTimer::new(),
         );
         let err = fresh
             .send_turn(Turn::Close {
@@ -173,13 +195,20 @@ fn spawned_echo_party_closes_a_turn_exchange() {
         let mut app_list = Allowlist::empty();
         app_list.admit(endpoint("bb"));
 
-        let mut runtime = LocalRuntime::new(endpoint("bb"), net.transport(), net.clone());
+        let mut runtime = LocalRuntime::new(
+            endpoint("bb"),
+            net.transport(),
+            net.clone(),
+            TestTimer::new(),
+            patience(),
+        );
         let mut list = Allowlist::empty();
         list.admit(endpoint("aa"));
         runtime
             .install(
                 name("harness"),
                 list,
+                patience(),
                 kamiroh::app::runtime::ActorKind::Harness,
             )
             .unwrap();
@@ -198,7 +227,13 @@ fn spawned_echo_party_closes_a_turn_exchange() {
 
         // Converse with it in turns: open → (ack, close-echo).
         let echo = address("bb", "echo");
-        let mut phone = Phone::converse(app.clone(), echo, net.transport());
+        let mut phone = Phone::converse(
+            app.clone(),
+            echo,
+            net.transport(),
+            patience(),
+            TestTimer::new(),
+        );
         phone.open(request(7)).await.unwrap();
         runtime.step(&name("echo")).await.unwrap();
 
