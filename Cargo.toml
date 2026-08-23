@@ -31,3 +31,20 @@ kamiroh-app.workspace = true
 kamiroh-adapter-iroh.workspace = true
 kamiroh-adapter-kameo.workspace = true
 kamiroh-adapter-memory.workspace = true
+
+[dev-dependencies]
+# Exact pin (dependency-bump hardening, 2026-08-20 incident): the
+# executable-specification runner for features/. 0.23.0 was published
+# 2026-04-23 and its MSRV (1.88) sits well under the sandbox floor.
+cucumber = "=0.23.0"
+# Exact pin, same hardening. Already in the lockfile via iroh and kameo, so
+# this adds no crate to the tree — it is here because one scenario ("a
+# conversation spans connections") is about real connections, and real
+# sockets need a reactor.
+tokio = { version = "=1.53.1", features = ["rt-multi-thread"] }
+
+# The executable specification (roadmap 6). `harness = false`: cucumber
+# brings its own runner. The ordinary `tests/*.rs` remain the fast gate.
+[[test]]
+name = "cucumber"
+harness = false

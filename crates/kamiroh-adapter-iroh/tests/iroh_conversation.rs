@@ -8,18 +8,23 @@
 use std::time::Duration;
 
 use kamiroh_adapter_iroh::{IrohInbox, IrohNet, IrohTransport};
-use kamiroh_adapter_kameo::KameoRuntime;
+use kamiroh_adapter_kameo::{KameoRuntime, TokioTimer};
 use kamiroh_app::inbound::{Inbound, process};
 use kamiroh_app::parties::CountdownParty;
 use kamiroh_app::phone::Phone;
 use kamiroh_app::runtime::ActorKind;
 use kamiroh_domain::actor::{ActorName, Address};
 use kamiroh_domain::allowlist::Allowlist;
+use kamiroh_domain::deadline::Deadlines;
 use kamiroh_domain::protocol::TurnProgress;
 use kamiroh_domain::secret::Secret;
 use kamiroh_domain::vocabulary::{Harness, Message, Request, RequestId, Response, Turn};
 use kamiroh_ports::{Inbox, Registry, Transport};
 use tokio::time::timeout;
+
+fn patience() -> Deadlines {
+    Deadlines::new(Duration::from_secs(5), Duration::from_secs(60))
+}
 
 fn name(s: &str) -> ActorName {
     ActorName::new(s).unwrap()
@@ -66,11 +71,16 @@ async fn actors_converse_across_real_iroh_endpoints() {
     assert_eq!(&id_b, net_b.endpoint_id());
 
     // Endpoint B: Kameo runtime hosting a harness actor admitting A.
-    let runtime = KameoRuntime::new(id_b.clone(), net_b.transport(), net_b.clone());
+    let runtime = KameoRuntime::new(id_b.clone(), net_b.transport(), net_b.clone(), patience());
     let mut harness_list = Allowlist::empty();
     harness_list.admit(id_a.clone());
     runtime
-        .install(name("harness"), harness_list, ActorKind::Harness)
+        .install(
+            name("harness"),
+            harness_list,
+            patience(),
+            ActorKind::Harness,
+        )
         .unwrap();
     let harness = Address::new(id_b.clone(), name("harness"));
 
@@ -108,7 +118,13 @@ async fn actors_converse_across_real_iroh_endpoints() {
 
     // -- A turn exchange with the spawned echo party --------------------
     let echo = Address::new(id_b.clone(), name("echo"));
-    let mut phone = Phone::converse(controller.clone(), echo, net_a.transport());
+    let mut phone = Phone::converse(
+        controller.clone(),
+        echo,
+        net_a.transport(),
+        patience(),
+        TokioTimer,
+    );
     phone.open(request(7)).await.unwrap();
     let mut saw_ack = false;
     loop {
@@ -137,11 +153,18 @@ async fn actors_converse_across_real_iroh_endpoints() {
         .install_party(
             name("counter"),
             countdown_list,
+            patience(),
             Box::new(CountdownParty::new(2)),
         )
         .unwrap();
     let counter = Address::new(id_b.clone(), name("counter"));
-    let mut phone = Phone::converse(controller.clone(), counter, net_a.transport());
+    let mut phone = Phone::converse(
+        controller.clone(),
+        counter,
+        net_a.transport(),
+        patience(),
+        TokioTimer,
+    );
     phone.open(request(1)).await.unwrap();
 
     let mut rounds = 0;
@@ -192,11 +215,16 @@ async fn one_sided_introduction_suffices_for_replies() {
     let id_a = net_a.endpoint_id().clone();
     // Deliberately NO net_b.add_peer(addr_a).
 
-    let runtime = KameoRuntime::new(id_b.clone(), net_b.transport(), net_b.clone());
+    let runtime = KameoRuntime::new(id_b.clone(), net_b.transport(), net_b.clone(), patience());
     let mut harness_list = Allowlist::empty();
     harness_list.admit(id_a.clone());
     runtime
-        .install(name("harness"), harness_list, ActorKind::Harness)
+        .install(
+            name("harness"),
+            harness_list,
+            patience(),
+            ActorKind::Harness,
+        )
         .unwrap();
 
     let controller = Address::new(id_a, name("controller"));
@@ -233,11 +261,16 @@ async fn unadmitted_endpoints_are_denied_across_the_wire() {
     let id_a = net_b.add_peer(addr_a);
 
     // B hosts a harness admitting only A. C is a stranger.
-    let runtime = KameoRuntime::new(id_b.clone(), net_b.transport(), net_b.clone());
+    let runtime = KameoRuntime::new(id_b.clone(), net_b.transport(), net_b.clone(), patience());
     let mut harness_list = Allowlist::empty();
     harness_list.admit(id_a.clone());
     runtime
-        .install(name("harness"), harness_list, ActorKind::Harness)
+        .install(
+            name("harness"),
+            harness_list,
+            patience(),
+            ActorKind::Harness,
+        )
         .unwrap();
     let harness = Address::new(id_b.clone(), name("harness"));
 

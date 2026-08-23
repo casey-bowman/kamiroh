@@ -6,17 +6,24 @@
 //! conversation) in between. Exercises the sequential-exchange rule and the
 //! Registry binding port along the way.
 
-use kamiroh::adapter_memory::testing::block_on;
+use std::time::Duration;
+
+use kamiroh::adapter_memory::testing::{TestTimer, block_on};
 use kamiroh::adapter_memory::{MemoryNet, MemoryTransportError};
 use kamiroh::app::conversation::{Conversation, ExchangeError};
 use kamiroh::app::inbound::{Inbound, process};
 use kamiroh::app::runtime::{ActorKind, LocalRuntime};
 use kamiroh::domain::actor::{ActorName, Address};
 use kamiroh::domain::allowlist::Allowlist;
+use kamiroh::domain::deadline::Deadlines;
 use kamiroh::domain::endpoint::EndpointId;
 use kamiroh::domain::hex::Hex;
 use kamiroh::domain::vocabulary::{Harness, Message, Request, RequestId};
 use kamiroh::ports::{Inbox, Transport};
+
+fn patience() -> Deadlines {
+    Deadlines::new(Duration::from_secs(5), Duration::from_secs(60))
+}
 
 fn endpoint(s: &str) -> EndpointId {
     EndpointId::new(Hex::new(s).unwrap())
@@ -44,11 +51,22 @@ fn a_conversation_of_sequential_exchanges() {
 
         // Endpoint "bb" runs the toy runtime with a harness actor admitting
         // the controller's endpoint. Privileged grant, deliberately explicit.
-        let mut runtime = LocalRuntime::new(endpoint("bb"), net.transport(), net.clone());
+        let mut runtime = LocalRuntime::new(
+            endpoint("bb"),
+            net.transport(),
+            net.clone(),
+            TestTimer::new(),
+            patience(),
+        );
         let mut harness_list = Allowlist::empty();
         harness_list.admit(controller.endpoint.clone());
         runtime
-            .install(name("harness"), harness_list, ActorKind::Harness)
+            .install(
+                name("harness"),
+                harness_list,
+                patience(),
+                ActorKind::Harness,
+            )
             .unwrap();
         let harness = address("bb", "harness");
 
@@ -154,11 +172,22 @@ fn harness_commands_to_unadmitted_controller_are_dropped() {
         let mut mallory_inbox = net.register(mallory.clone()).unwrap();
 
         // The harness admits only endpoint "aa"; Mallory is on "cc".
-        let mut runtime = LocalRuntime::new(endpoint("bb"), net.transport(), net.clone());
+        let mut runtime = LocalRuntime::new(
+            endpoint("bb"),
+            net.transport(),
+            net.clone(),
+            TestTimer::new(),
+            patience(),
+        );
         let mut harness_list = Allowlist::empty();
         harness_list.admit(endpoint("aa"));
         runtime
-            .install(name("harness"), harness_list, ActorKind::Harness)
+            .install(
+                name("harness"),
+                harness_list,
+                patience(),
+                ActorKind::Harness,
+            )
             .unwrap();
         let harness = address("bb", "harness");
 

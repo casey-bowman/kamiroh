@@ -22,6 +22,12 @@ pub struct Request {
 /// Delivery acknowledgment from the remote **actor**: "the request reached
 /// the dedicated actor and was handed over."
 ///
+/// One qualified exception (`ARCHITECTURE.md`, decision 29): a fan-out's
+/// **batch receipt** is an `Ack` from the *endpoint* — claimed-from the
+/// mailroom convention, sent at arrival before any actor or allowlist is
+/// consulted — promising "the batch reached the endpoint" and nothing
+/// about any individual actor.
+///
 /// Deliberately distinct from any future `Response` (the party's actual
 /// answer), so response semantics can arrive later without remodeling
 /// (`ARCHITECTURE.md`, decision 4).

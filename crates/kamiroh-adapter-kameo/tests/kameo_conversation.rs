@@ -7,18 +7,23 @@
 
 use std::time::Duration;
 
-use kamiroh_adapter_kameo::KameoRuntime;
+use kamiroh_adapter_kameo::{KameoRuntime, TokioTimer};
 use kamiroh_adapter_memory::{MemoryNet, MemoryTransportError};
 use kamiroh_app::conversation::Conversation;
 use kamiroh_app::inbound::{Inbound, process};
 use kamiroh_app::runtime::ActorKind;
 use kamiroh_domain::actor::{ActorName, Address};
 use kamiroh_domain::allowlist::Allowlist;
+use kamiroh_domain::deadline::Deadlines;
 use kamiroh_domain::endpoint::EndpointId;
 use kamiroh_domain::hex::Hex;
 use kamiroh_domain::vocabulary::{Harness, Message, Request, RequestId};
 use kamiroh_ports::{Inbox, Transport};
 use tokio::time::timeout;
+
+fn patience() -> Deadlines {
+    Deadlines::new(Duration::from_secs(5), Duration::from_secs(60))
+}
 
 fn endpoint(s: &str) -> EndpointId {
     EndpointId::new(Hex::new(s).unwrap())
@@ -57,11 +62,16 @@ async fn kameo_actors_run_the_harness_conversation() {
     controller_list.admit(endpoint("bb"));
 
     // Endpoint "bb" runs the Kameo runtime; harness actor admits "aa".
-    let runtime = KameoRuntime::new(endpoint("bb"), net.transport(), net.clone());
+    let runtime = KameoRuntime::new(endpoint("bb"), net.transport(), net.clone(), patience());
     let mut harness_list = Allowlist::empty();
     harness_list.admit(controller.endpoint.clone());
     runtime
-        .install(name("harness"), harness_list, ActorKind::Harness)
+        .install(
+            name("harness"),
+            harness_list,
+            patience(),
+            ActorKind::Harness,
+        )
         .unwrap();
     let harness = address("bb", "harness");
 
@@ -170,18 +180,25 @@ async fn kameo_hosted_party_runs_a_multi_round_turn_exchange() {
     let mut app_list = Allowlist::empty();
     app_list.admit(endpoint("bb"));
 
-    let runtime = KameoRuntime::new(endpoint("bb"), net.transport(), net.clone());
+    let runtime = KameoRuntime::new(endpoint("bb"), net.transport(), net.clone(), patience());
     let mut party_list = Allowlist::empty();
     party_list.admit(endpoint("aa"));
     runtime
         .install_party(
             name("counter"),
             party_list,
+            patience(),
             Box::new(CountdownParty::new(2)),
         )
         .unwrap();
 
-    let mut phone = Phone::converse(app.clone(), address("bb", "counter"), net.transport());
+    let mut phone = Phone::converse(
+        app.clone(),
+        address("bb", "counter"),
+        net.transport(),
+        patience(),
+        TokioTimer,
+    );
     phone
         .open(Request {
             id: RequestId([1; 16]),
@@ -244,11 +261,16 @@ async fn unadmitted_commands_are_dropped_by_kameo_hosts() {
     let mallory = address("cc", "mallory");
     let _mallory_inbox = net.register(mallory.clone()).unwrap();
 
-    let runtime = KameoRuntime::new(endpoint("bb"), net.transport(), net.clone());
+    let runtime = KameoRuntime::new(endpoint("bb"), net.transport(), net.clone(), patience());
     let mut harness_list = Allowlist::empty();
     harness_list.admit(endpoint("aa")); // not Mallory's endpoint
     runtime
-        .install(name("harness"), harness_list, ActorKind::Harness)
+        .install(
+            name("harness"),
+            harness_list,
+            patience(),
+            ActorKind::Harness,
+        )
         .unwrap();
 
     transport
