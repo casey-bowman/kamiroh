@@ -163,6 +163,17 @@ that shuttle nearly frictionless:
   outlive the workshops carry the name of the person who declared the
   spike question answered.
 
+  The session addresses are `ander@bayworks.ai` (the build-and-verify
+  session) and `mez@bayworks.ai` (the design session). Neither is a
+  registered account: an unregistered address still renders the trailer
+  correctly, and an account would imply a persistence a session does not
+  have. Use them rather than the human's address — git hosts match
+  commits to accounts by email, so authoring as Casey collapses exactly
+  the distinction this convention exists to draw, and early commits that
+  did so are why this paragraph names the addresses at all. Set them
+  per-commit (`GIT_AUTHOR_NAME` / `GIT_AUTHOR_EMAIL`) rather than in the
+  repository's git config, which the human also uses.
+
 ## The gate
 
 Every branch offered for review runs, and reports: `cargo build
