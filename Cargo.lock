@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "kamiroh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "cucumber",
  "kamiroh-adapter-iroh",
@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "kamiroh-adapter-iroh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "iroh",
  "kamiroh-adapter-kameo",
@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "kamiroh-adapter-kameo"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kameo",
  "kamiroh-adapter-memory",
@@ -1974,7 +1974,7 @@ dependencies = [
 
 [[package]]
 name = "kamiroh-adapter-memory"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kamiroh-domain",
  "kamiroh-ports",
@@ -1982,7 +1982,7 @@ dependencies = [
 
 [[package]]
 name = "kamiroh-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kamiroh-domain",
  "kamiroh-ports",
@@ -1990,14 +1990,14 @@ dependencies = [
 
 [[package]]
 name = "kamiroh-domain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "kamiroh-ports"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "kamiroh-domain",
 ]

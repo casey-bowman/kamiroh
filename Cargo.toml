@@ -2,24 +2,24 @@
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/casey-bowman/kamiroh"
 
 [workspace.dependencies]
-kamiroh-domain = { path = "crates/kamiroh-domain", version = "0.1.0" }
-kamiroh-ports = { path = "crates/kamiroh-ports", version = "0.1.0" }
-kamiroh-app = { path = "crates/kamiroh-app", version = "0.1.0" }
-kamiroh-adapter-iroh = { path = "crates/kamiroh-adapter-iroh", version = "0.1.0" }
-kamiroh-adapter-kameo = { path = "crates/kamiroh-adapter-kameo", version = "0.1.0" }
-kamiroh-adapter-memory = { path = "crates/kamiroh-adapter-memory", version = "0.1.0" }
+kamiroh-domain = { path = "crates/kamiroh-domain", version = "0.2.0" }
+kamiroh-ports = { path = "crates/kamiroh-ports", version = "0.2.0" }
+kamiroh-app = { path = "crates/kamiroh-app", version = "0.2.0" }
+kamiroh-adapter-iroh = { path = "crates/kamiroh-adapter-iroh", version = "0.2.0" }
+kamiroh-adapter-kameo = { path = "crates/kamiroh-adapter-kameo", version = "0.2.0" }
+kamiroh-adapter-memory = { path = "crates/kamiroh-adapter-memory", version = "0.2.0" }
 
 [package]
 name = "kamiroh"
 version.workspace = true
 edition.workspace = true
-description = "Peer actors, addressable by name and endpoint, that message each other--locally or across the network—-to drive agents"
+description = "Peer actors, addressable by name and endpoint, that message each other — locally or across the network — to drive agents"
 license.workspace = true
 repository.workspace = true
 readme = "README.md"
