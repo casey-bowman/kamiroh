@@ -24,13 +24,29 @@ aborts and rewards a destructive recovery.
 
 Received 2026-08-27 from a confidential embedder project and published verbatim
 with its author's and second reader's consent — Riveter (author) and Welder
-(second reader),
-session codenames per the same convention that names kamiroh's own sessions
-(see `WORKFLOW.md`). Both findings were reproduced independently on the kamiroh
-side before publication — finding 1 by two seats, once against this repository
-itself. The fixes land in the same commit as this file.
+(second reader), session codenames per the same convention that names kamiroh's
+own sessions (see `WORKFLOW.md`). Both findings were reproduced independently
+on the kamiroh side before publication — finding 1 by two seats, once against
+this repository itself. The fixes land in the same commit as this file.
 
 Both suggested fixes were adopted as written. Kamiroh added three things the
 findings did not ask for: an explicit post-condition for the refresh
 procedure, a standing rule that no step deletes anything implicitly, and a
 scoped optional cleanup step. See `VENDORING.md`.
+
+**One point where this report and `VENDORING.md` disagree, said out loud so a
+reader does not have to guess whether it is a transcription error.** Finding 2
+describes `git checkout -f` as discarding untracked files, and warns the reader
+about files they had added. Reproduced here with both cases planted, it does
+the opposite of what that warning implies: **a file you added survives, and an
+edit you made to a file already on the target branch is silently discarded.**
+Since `git rm --cached .` leaves every source file untracked, `-f` overwrites
+them all from the target tree without a word, and the result is
+indistinguishable from a clean return. The hazard is narrower than the report
+states and worse — the mitigation inverts. The report stands as received;
+`VENDORING.md` carries the corrected wording, and the correction has gone back
+to its authors.
+
+The other difference is deliberate and documented in place: the report puts its
+`git status` check before `symbolic-ref`, kamiroh runs it after, and
+`VENDORING.md` names the source placement as equally safe.
